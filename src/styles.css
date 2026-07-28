@@ -93,9 +93,9 @@ button:disabled { cursor: not-allowed; opacity: .65; }
 .map-count { padding: 6px 9px; color: #728077; background: #f3f3ef; border-radius: 5px; font-size: 9px; text-transform: uppercase; }
 
 .campus-map { position: relative; height: 385px; overflow: hidden; background: #e8e8df; border: 1px solid #d8d9d1; border-radius: 11px; isolation: isolate; }
-.campus-map.has-floor-plan { background: #f5f4ed; }
+.campus-map.has-floor-plan { height: auto; background: #f5f4ed; }
 .campus-map.has-floor-plan::before, .campus-map.has-floor-plan::after { display: none; }
-.floor-plan-image { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #f5f4ed; }
+.floor-plan-image { position: absolute; z-index: 0; inset: 0; width: 100%; height: 100%; object-fit: fill; background: #f5f4ed; }
 .map-grid { position: absolute; inset: 0; z-index: -3; opacity: .48; background-image: linear-gradient(#c9cdc4 1px, transparent 1px), linear-gradient(90deg, #c9cdc4 1px, transparent 1px); background-size: 34px 34px; transform: rotate(-7deg) scale(1.2); }
 .campus-map::before { content: ""; position: absolute; z-index: -2; width: 45%; height: 35%; left: -7%; top: 47%; background: #cbd9ca; border-radius: 50%; transform: rotate(-20deg); }
 .campus-map::after { content: ""; position: absolute; z-index: -1; width: 60%; height: 27px; right: -8%; top: 47%; background: #dad8c9; transform: rotate(-13deg); border-top: 2px solid #f6f2df; border-bottom: 2px solid #f6f2df; }
@@ -197,6 +197,7 @@ td select { padding: 6px 25px 6px 8px; color: #435047; background: #fff; border:
 .map-admin-actions { display: flex; gap: 8px; }.map-admin-actions .button { flex: 1; }
 .map-upload-panel .admin-note { margin-bottom: 0; }
 .map-preview .campus-map { height: 330px; }
+.map-preview .campus-map.has-floor-plan { height: auto; }
 
 .demo-banner { padding: 7px 20px; color: #5b5129; background: #f5e8b9; text-align: center; font-size: 10px; }.demo-banner span { margin-right: 7px; padding: 2px 5px; color: #fff; background: #ab8528; border-radius: 3px; font-size: 8px; font-weight: 700; }
 .toast-error { position: fixed; z-index: 50; top: 18px; left: calc(50% + 118px); transform: translateX(-50%); display: flex; gap: 15px; max-width: 550px; padding: 11px 15px; color: #8e3832; background: #fff0ee; border: 1px solid #efcac6; border-radius: 8px; box-shadow: 0 8px 25px rgba(80,30,30,.1); font-size: 11px; }
@@ -255,7 +256,7 @@ td select { padding: 6px 25px 6px 8px; color: #435047; background: #fff; border:
   .place-editor-row { grid-template-columns: 30px 1fr 42px 30px; gap: 9px; padding: 13px 10px; }
   .place-name-input { grid-column: 2; }.qr-button { grid-column: 3; grid-row: 1; }.remove-place { grid-column: 4; grid-row: 1; }.place-number { grid-column: 1; grid-row: 1; }
   .position-control { grid-column: 1 / 5; }.place-toggle { grid-column: 1 / 5; }
-  .map-admin-grid { gap: 15px; }.map-upload-panel { padding: 15px; }.map-admin-actions { flex-direction: column; }.map-preview .campus-map { height: 280px; }
+  .map-admin-grid { gap: 15px; }.map-upload-panel { padding: 15px; }.map-admin-actions { flex-direction: column; }.map-preview .campus-map { height: 280px; }.map-preview .campus-map.has-floor-plan { height: auto; }
   .toast-error { top: 66px; left: 12px; right: 12px; transform: none; }
   .login-page { padding: 20px; }.login-card, .setup-card { padding: 32px 23px; }.login-brand { margin-bottom: 22px; }
 }

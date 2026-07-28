@@ -153,7 +153,7 @@ async function compressMapImage(file: File) {
       dataUrl = canvas.toDataURL("image/jpeg", quality);
     }
     if (dataUrl.length > 700_000) throw new Error("画像を十分に圧縮できません。より小さい画像を選択してください。");
-    return dataUrl;
+    return { dataUrl, width: canvas.width, height: canvas.height };
   } finally {
     URL.revokeObjectURL(objectUrl);
   }
@@ -286,23 +286,49 @@ function wait(milliseconds: number) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
-function CampusMap({ locations, places, mapImageUrl = "" }: { locations: TeacherLocation[]; places: CampusPlace[]; mapImageUrl?: string }) {
+function CampusMap({
+  locations,
+  places,
+  mapImageUrl = "",
+  mapImageWidth = 0,
+  mapImageHeight = 0,
+}: {
+  locations: TeacherLocation[];
+  places: CampusPlace[];
+  mapImageUrl?: string;
+  mapImageWidth?: number;
+  mapImageHeight?: number;
+}) {
+  const [detectedDimensions, setDetectedDimensions] = useState({ width: 0, height: 0 });
+  const width = mapImageWidth || detectedDimensions.width;
+  const height = mapImageHeight || detectedDimensions.height;
+  const aspectRatio = width > 0 && height > 0 ? `${width} / ${height}` : "16 / 9";
+  const groupedByPlace = new Map<string, TeacherLocation[]>();
+  locations.forEach((location) => {
+    const group = groupedByPlace.get(location.placeId) ?? [];
+    group.push(location);
+    groupedByPlace.set(location.placeId, group);
+  });
+  const locationGroups = Array.from(groupedByPlace.entries());
+
   return (
-    <div className={`campus-map${mapImageUrl ? " has-floor-plan" : ""}`} aria-label="教職員の位置概略図">
-      {mapImageUrl ? <img className="floor-plan-image" src={mapImageUrl} alt="管理者が登録した校内マップ" /> : <><div className="map-grid" /><span className="building building-a">本館</span><span className="building building-b">南館</span><span className="building building-c">体育館</span></>}
-      {locations.map((location, index) => {
-        const place = places.find((item) => item.id === location.placeId) ?? defaultCampusPlaces[0];
-        const samePlaceIndex = locations.slice(0, index).filter((item) => item.placeId === location.placeId).length;
-        const left = place.left + (samePlaceIndex % 3) * 4;
-        const top = place.top + Math.floor(samePlaceIndex / 3) * 6;
+    <div className={`campus-map${mapImageUrl ? " has-floor-plan" : ""}`} style={mapImageUrl ? { aspectRatio } : undefined} aria-label="教職員の位置概略図">
+      {mapImageUrl ? <img className="floor-plan-image" src={mapImageUrl} alt="管理者が登録した校内マップ" onLoad={(event) => {
+        const image = event.currentTarget;
+        if (!mapImageWidth || !mapImageHeight) setDetectedDimensions({ width: image.naturalWidth, height: image.naturalHeight });
+      }} /> : <><div className="map-grid" /><span className="building building-a">本館</span><span className="building building-b">南館</span><span className="building building-c">体育館</span></>}
+      {locationGroups.map(([placeId, groupedLocations], index) => {
+        const place = places.find((item) => item.id === placeId) ?? defaultCampusPlaces[0];
+        const names = groupedLocations.map((location) => location.displayName).join("、");
         return (
           <span
-            key={location.id}
+            key={placeId}
             className={`map-marker marker-${index % 3}`}
-            style={{ left: `${left}%`, top: `${top}%` }}
-            title={`${location.displayName}・${placeLabel(location, places)}`}
+            style={{ left: `${place.left}%`, top: `${place.top}%` }}
+            title={`${names}・${place.label}`}
+            aria-label={`${place.label}：${names}`}
           >
-            {avatarInitial(location.displayName)}
+            {groupedLocations.length > 1 ? groupedLocations.length : avatarInitial(groupedLocations[0].displayName)}
           </span>
         );
       })}
@@ -361,6 +387,8 @@ function App() {
   const [placesSaving, setPlacesSaving] = useState(false);
   const [mapImageUrl, setMapImageUrl] = useState("");
   const [mapFileName, setMapFileName] = useState("");
+  const [mapImageWidth, setMapImageWidth] = useState(0);
+  const [mapImageHeight, setMapImageHeight] = useState(0);
   const [mapDirty, setMapDirty] = useState(false);
   const [mapSaving, setMapSaving] = useState(false);
   const [mapProcessing, setMapProcessing] = useState(false);
@@ -490,6 +518,8 @@ function App() {
       const data = snapshot.data();
       setMapImageUrl(typeof data?.imageDataUrl === "string" ? data.imageDataUrl : "");
       setMapFileName(typeof data?.fileName === "string" ? data.fileName : "");
+      setMapImageWidth(Number.isFinite(Number(data?.imageWidth)) ? Number(data?.imageWidth) : 0);
+      setMapImageHeight(Number.isFinite(Number(data?.imageHeight)) ? Number(data?.imageHeight) : 0);
       setMapDirty(false);
     }, () => setError("校内マップ画像を読み込めませんでした。"));
   }, [profile]);
@@ -634,7 +664,9 @@ function App() {
     setError("");
     try {
       const compressed = await compressMapImage(file);
-      setMapImageUrl(compressed);
+      setMapImageUrl(compressed.dataUrl);
+      setMapImageWidth(compressed.width);
+      setMapImageHeight(compressed.height);
       setMapFileName(file.name);
       setMapDirty(true);
     } catch (caught) {
@@ -654,6 +686,7 @@ function App() {
         await setDoc(doc(db, "config", "map"), {
           imageDataUrl: mapImageUrl,
           fileName: mapFileName,
+          ...(mapImageWidth > 0 && mapImageHeight > 0 ? { imageWidth: mapImageWidth, imageHeight: mapImageHeight } : {}),
           updatedAt: serverTimestamp(),
         });
       }
@@ -667,6 +700,8 @@ function App() {
   const removeMapImage = () => {
     setMapImageUrl("");
     setMapFileName("");
+    setMapImageWidth(0);
+    setMapImageHeight(0);
     setMapDirty(true);
   };
 
@@ -808,7 +843,7 @@ function App() {
             )}
 
             <div className="dashboard-grid">
-              <section className="map-card"><div className="section-title"><div><p className="eyebrow">CAMPUS MAP</p><h2>校内マップ</h2></div><span className="map-count">{visibleLocations.length} locations</span></div><CampusMap locations={visibleLocations} places={places} mapImageUrl={mapImageUrl}/></section>
+              <section className="map-card"><div className="section-title"><div><p className="eyebrow">CAMPUS MAP</p><h2>校内マップ</h2></div><span className="map-count">{visibleLocations.length} locations</span></div><CampusMap locations={visibleLocations} places={places} mapImageUrl={mapImageUrl} mapImageWidth={mapImageWidth} mapImageHeight={mapImageHeight}/></section>
               <section className="people-card"><div className="section-title"><div><p className="eyebrow">FACULTY</p><h2>先生を探す</h2></div></div><label className="search-box"><Icon name="search" size={18}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="名前・場所で検索" /></label><div className="teacher-list">
                 {visibleLocations.map((location) => {
                   const stale = isStale(location, now);
@@ -863,7 +898,7 @@ function App() {
                   <div className="map-admin-actions"><button className="button stop" onClick={removeMapImage} disabled={!mapImageUrl}>画像を外す</button><button className="button primary" onClick={saveMapImage} disabled={!mapDirty || mapSaving || mapProcessing}>{mapSaving ? "保存中…" : mapDirty ? "マップを保存" : "保存済み"}</button></div>
                   <p className="admin-note"><Icon name="shield" size={16}/>画像は学校アカウントでログインした利用者だけが読み込めます。</p>
                 </div>
-                <div className="map-preview"><CampusMap locations={activeLocations} places={places} mapImageUrl={mapImageUrl}/></div>
+                <div className="map-preview"><CampusMap locations={activeLocations} places={places} mapImageUrl={mapImageUrl} mapImageWidth={mapImageWidth} mapImageHeight={mapImageHeight}/></div>
               </div>
             </section>
           </div>
