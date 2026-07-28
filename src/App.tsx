@@ -295,6 +295,20 @@ function restoreTeacherNames(text: string, aliases: Map<string, string>) {
   return restored.slice(0, 600);
 }
 
+function aiDiagnosticCode(message: string) {
+  if (/401|unauthenticated|app.?check/i.test(message)) return "AI-401";
+  if (/403|permission.?denied/i.test(message)) return "AI-403";
+  if (/429|quota|resource.?exhausted/i.test(message)) return "AI-429";
+  if (/408|timeout/i.test(message)) return "AI-408";
+  if (/500|502|503|504|unavailable|overloaded|internal/i.test(message)) return "AI-503";
+  if (/fetch|network|load failed|connection/i.test(message)) return "AI-NETWORK";
+  return "AI-RESPONSE";
+}
+
+function wait(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
 function CampusMap({ locations, places, mapImageUrl = "" }: { locations: TeacherLocation[]; places: CampusPlace[]; mapImageUrl?: string }) {
   return (
     <div className={`campus-map${mapImageUrl ? " has-floor-plan" : ""}`} aria-label="教職員の位置概略図">
@@ -725,20 +739,41 @@ function App() {
         setChatMessages((current) => [...current, { from: "assistant", text: `${request.fallbackAnswer || "回答できませんでした。"}（デモ回答）` }]);
         return;
       }
-      const result = await aiModel.generateContent(request.prompt);
-      const answer = restoreTeacherNames(result.response.text(), request.aliases);
+      const model = aiModel;
+      const generateAnswer = async (refreshAuth = false) => {
+        if (firebaseUser) await firebaseUser.getIdToken(refreshAuth);
+        const result = await model.generateContent(request.prompt!);
+        return restoreTeacherNames(result.response.text(), request.aliases!);
+      };
+      const retryDelays = [0, 1500, 4000];
+      let answer = "";
+      let lastFailure: unknown;
+      for (let attempt = 0; attempt < retryDelays.length; attempt += 1) {
+        if (retryDelays[attempt]) await wait(retryDelays[attempt]);
+        try {
+          answer = await generateAnswer(attempt > 0);
+          lastFailure = undefined;
+          break;
+        } catch (failure) {
+          lastFailure = failure;
+          const failureMessage = failure instanceof Error ? failure.message : "";
+          if (/400|invalid.?argument|403|permission.?denied/i.test(failureMessage)) throw failure;
+        }
+      }
+      if (lastFailure) throw lastFailure;
       setChatMessages((current) => [...current, { from: "assistant", text: answer || "回答を生成できませんでした。もう一度お試しください。" }]);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "";
       const rateLimited = /429|quota|resource.?exhausted/i.test(message);
+      const diagnosticCode = aiDiagnosticCode(message);
       console.error("Gemini request failed", caught);
       setChatMessages((current) => [...current, {
         from: "assistant",
         text: request.fallbackAnswer
-          ? `${request.fallbackAnswer}（${rateLimited ? "AIの利用上限に達したため" : "AI通信に失敗したため"}、アプリ内の最新データから回答しました）`
+          ? `${request.fallbackAnswer}（${rateLimited ? "AIの利用上限に達したため" : "AI通信が完了しなかったため"}、アプリ内の最新データから回答しました／診断コード: ${diagnosticCode}）`
           : rateLimited
             ? "Gemini APIの無料枠または一時的な利用上限に達しました。少し時間をおいてお試しください。"
-            : "AIに接続できませんでした。時間をおいてもう一度お試しください。",
+            : `AIに接続できませんでした。時間をおいてもう一度お試しください。（診断コード: ${diagnosticCode}）`,
       }]);
     } finally {
       setChatSending(false);
