@@ -10,6 +10,7 @@
 - 選択場所、在席状況、ひとことのリアルタイム表示
 - 名前・場所検索と校内マップ表示
 - 管理者によるユーザー権限変更
+- 管理者による場所選択肢・有効状態・マップ位置の編集
 - 将来Gemini APIを接続するためのチャットUI（現在は未接続）
 - GitHub ActionsによるGitHub Pages自動デプロイ
 
@@ -84,18 +85,22 @@ GitHubの `Settings → Secrets and variables → Actions → Variables` に、�
 config/auth
   allowedEmailDomain, initialAdminEmail
 
+config/places
+  items[], placeIds[], updatedAt
+
 users/{uid}
   uid, displayName, email, photoURL, role, active, createdAt, updatedAt
 
 locations/{uid}
-  ownerId, displayName, photoURL, role, placeId, placeLabel, note,
+  ownerId, displayName, photoURL, role, placeId, note,
   availability, sharing, updatedAt
 ```
 
 ## 場所共有と運用上の注意
 
 - GPSやブラウザの位置情報APIは使用しません。
-- 教職員が校内の選択肢から自分のいる場所を選び、共有します。
+- 教職員が管理者の設定した選択肢から自分のいる場所を選び、共有します。
+- 管理者はアプリの「管理 → 場所の選択肢」から、場所名・利用状態・マップ表示位置を変更できます。
 - 共有を停止するとFirestoreの場所ドキュメントを削除します。
 - 利用開始前に学校の個人情報保護方針、保護者・教職員への説明、保存期間、緊急時対応を確認してください。
 - 場所の履歴は保存しません。将来履歴を追加する場合は、目的・保存期間・閲覧権限を別途設計してください。

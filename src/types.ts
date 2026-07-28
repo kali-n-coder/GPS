@@ -3,6 +3,14 @@ import type { Timestamp } from "firebase/firestore";
 export type Role = "student" | "teacher" | "admin";
 export type Availability = "available" | "busy" | "away";
 
+export interface CampusPlace {
+  id: string;
+  label: string;
+  left: number;
+  top: number;
+  active: boolean;
+}
+
 export interface AppUser {
   uid: string;
   displayName: string;
@@ -21,7 +29,6 @@ export interface TeacherLocation {
   photoURL?: string;
   role: "teacher" | "admin";
   placeId: string;
-  placeLabel: string;
   note: string;
   availability: Availability;
   sharing: boolean;

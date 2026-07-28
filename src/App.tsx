@@ -13,7 +13,7 @@ import {
   updateDoc,
 } from "firebase/firestore";
 import { allowedEmailDomain, auth, db, demoMode, firebaseConfigured } from "./firebase";
-import type { AppUser, Availability, Role, TeacherLocation } from "./types";
+import type { AppUser, Availability, CampusPlace, Role, TeacherLocation } from "./types";
 
 type View = "home" | "chat" | "admin";
 
@@ -29,15 +29,15 @@ const availabilityLabels: Record<Availability, string> = {
   away: "離席中",
 };
 
-const campusPlaces = [
-  { id: "staff-room", label: "本館 2F・職員室", left: 49, top: 29 },
-  { id: "office", label: "本館 1F・事務室", left: 62, top: 37 },
-  { id: "nurse-room", label: "南館 1F・保健室", left: 73, top: 70 },
-  { id: "science-room", label: "南館 3F・理科室", left: 67, top: 62 },
-  { id: "gym", label: "体育館", left: 21, top: 73 },
-  { id: "ground", label: "グラウンド", left: 17, top: 45 },
-  { id: "off-campus", label: "校外", left: 87, top: 19 },
-] as const;
+const defaultCampusPlaces: CampusPlace[] = [
+  { id: "staff-room", label: "本館 2F・職員室", left: 49, top: 29, active: true },
+  { id: "office", label: "本館 1F・事務室", left: 62, top: 37, active: true },
+  { id: "nurse-room", label: "南館 1F・保健室", left: 73, top: 70, active: true },
+  { id: "science-room", label: "南館 3F・理科室", left: 67, top: 62, active: true },
+  { id: "gym", label: "体育館", left: 21, top: 73, active: true },
+  { id: "ground", label: "グラウンド", left: 17, top: 45, active: true },
+  { id: "off-campus", label: "校外", left: 87, top: 19, active: true },
+];
 
 const demoLocations: TeacherLocation[] = [
   {
@@ -46,7 +46,6 @@ const demoLocations: TeacherLocation[] = [
     displayName: "田中 美咲",
     role: "teacher",
     placeId: "staff-room",
-    placeLabel: "本館 2F・職員室",
     note: "16:30まで在室予定",
     availability: "available",
     sharing: true,
@@ -57,7 +56,6 @@ const demoLocations: TeacherLocation[] = [
     displayName: "佐藤 健太",
     role: "teacher",
     placeId: "gym",
-    placeLabel: "体育館",
     note: "2年B組の授業中",
     availability: "busy",
     sharing: true,
@@ -68,7 +66,6 @@ const demoLocations: TeacherLocation[] = [
     displayName: "山田 京子",
     role: "teacher",
     placeId: "nurse-room",
-    placeLabel: "南館 1F・保健室",
     note: "",
     availability: "away",
     sharing: true,
@@ -84,6 +81,8 @@ const demoUsers: AppUser[] = [
 
 const requestedDemoRole = new URLSearchParams(window.location.search).get("role") as Role | null;
 const defaultDemoUser = demoUsers.find((item) => item.role === requestedDemoRole) ?? demoUsers[0];
+const requestedDemoView = new URLSearchParams(window.location.search).get("view") as View | null;
+const defaultDemoView: View = requestedDemoView && ["home", "chat", "admin"].includes(requestedDemoView) ? requestedDemoView : "home";
 
 function Icon({ name, size = 20 }: { name: "pin" | "home" | "chat" | "admin" | "shield" | "logout" | "search" | "send"; size?: number }) {
   const paths = {
@@ -112,7 +111,11 @@ function timestampLabel(location: TeacherLocation) {
   return `${Math.floor(minutes / 60)}時間前`;
 }
 
-function CampusMap({ locations }: { locations: TeacherLocation[] }) {
+function placeLabel(location: TeacherLocation, places: CampusPlace[]) {
+  return places.find((item) => item.id === location.placeId)?.label ?? "廃止された場所";
+}
+
+function CampusMap({ locations, places }: { locations: TeacherLocation[]; places: CampusPlace[] }) {
   return (
     <div className="campus-map" aria-label="教職員の位置概略図">
       <div className="map-grid" />
@@ -120,7 +123,7 @@ function CampusMap({ locations }: { locations: TeacherLocation[] }) {
       <span className="building building-b">南館</span>
       <span className="building building-c">体育館</span>
       {locations.map((location, index) => {
-        const place = campusPlaces.find((item) => item.id === location.placeId) ?? campusPlaces[0];
+        const place = places.find((item) => item.id === location.placeId) ?? defaultCampusPlaces[0];
         const samePlaceIndex = locations.slice(0, index).filter((item) => item.placeId === location.placeId).length;
         const left = place.left + (samePlaceIndex % 3) * 4;
         const top = place.top + Math.floor(samePlaceIndex / 3) * 6;
@@ -129,7 +132,7 @@ function CampusMap({ locations }: { locations: TeacherLocation[] }) {
             key={location.id}
             className={`map-marker marker-${index % 3}`}
             style={{ left: `${left}%`, top: `${top}%` }}
-            title={`${location.displayName}・${location.placeLabel}`}
+            title={`${location.displayName}・${placeLabel(location, places)}`}
           >
             {avatarInitial(location.displayName)}
           </span>
@@ -184,13 +187,16 @@ function App() {
   const [profile, setProfile] = useState<AppUser | null>(demoMode ? defaultDemoUser : null);
   const [locations, setLocations] = useState<TeacherLocation[]>(demoMode ? demoLocations : []);
   const [users, setUsers] = useState<AppUser[]>(demoMode ? demoUsers : []);
+  const [places, setPlaces] = useState<CampusPlace[]>(defaultCampusPlaces);
+  const [placesDirty, setPlacesDirty] = useState(false);
+  const [placesSaving, setPlacesSaving] = useState(false);
   const [loading, setLoading] = useState(firebaseConfigured);
   const [authBusy, setAuthBusy] = useState(false);
   const [error, setError] = useState("");
-  const [view, setView] = useState<View>("home");
+  const [view, setView] = useState<View>(demoMode ? defaultDemoView : "home");
   const [query, setQuery] = useState("");
   const [availability, setAvailability] = useState<Availability>("available");
-  const [placeId, setPlaceId] = useState<(typeof campusPlaces)[number]["id"]>("staff-room");
+  const [placeId, setPlaceId] = useState("staff-room");
   const [note, setNote] = useState("");
   const [sharing, setSharing] = useState(false);
   const [savingPlace, setSavingPlace] = useState(false);
@@ -250,6 +256,35 @@ function App() {
   }, [profile]);
 
   useEffect(() => {
+    if (!db || !profile) return;
+    return onSnapshot(doc(db, "config", "places"), (snapshot) => {
+      if (!snapshot.exists()) return;
+      const items = snapshot.data().items;
+      if (!Array.isArray(items)) return;
+      const loaded = items
+        .filter((item) => item && typeof item.id === "string" && typeof item.label === "string")
+        .map((item) => ({
+          id: item.id,
+          label: item.label,
+          left: Number(item.left),
+          top: Number(item.top),
+          active: item.active !== false,
+        })) as CampusPlace[];
+      if (loaded.length) {
+        setPlaces(loaded);
+        setPlacesDirty(false);
+      }
+    }, () => setError("場所の選択肢を読み込めませんでした。"));
+  }, [profile]);
+
+  useEffect(() => {
+    const activePlaces = places.filter((place) => place.active);
+    if (activePlaces.length && !activePlaces.some((place) => place.id === placeId)) {
+      setPlaceId(activePlaces[0].id);
+    }
+  }, [places, placeId]);
+
+  useEffect(() => {
     if (!db || profile?.role !== "admin") return;
     return onSnapshot(collection(db, "users"), (snapshot) => {
       setUsers(snapshot.docs.map((item) => ({ uid: item.id, ...item.data() }) as AppUser));
@@ -277,7 +312,11 @@ function App() {
 
   const shareSelectedPlace = async () => {
     if (!profile) return;
-    const selectedPlace = campusPlaces.find((item) => item.id === placeId) ?? campusPlaces[0];
+    const selectedPlace = places.find((item) => item.id === placeId && item.active);
+    if (!selectedPlace) {
+      setError("共有する場所を選択してください。");
+      return;
+    }
     setSavingPlace(true);
     setError("");
     const location: Omit<TeacherLocation, "id" | "updatedAt"> = {
@@ -286,7 +325,6 @@ function App() {
       ...(profile.photoURL ? { photoURL: profile.photoURL } : {}),
       role: profile.role === "student" ? "teacher" : profile.role,
       placeId: selectedPlace.id,
-      placeLabel: selectedPlace.label,
       note,
       availability,
       sharing: true,
@@ -321,6 +359,57 @@ function App() {
     if (db) await updateDoc(doc(db, "users", uid), { role, updatedAt: serverTimestamp() });
   };
 
+  const updatePlace = (id: string, patch: Partial<CampusPlace>) => {
+    setPlaces((current) => current.map((place) => place.id === id ? { ...place, ...patch } : place));
+    setPlacesDirty(true);
+  };
+
+  const addPlace = () => {
+    const id = `place-${Date.now().toString(36)}`;
+    setPlaces((current) => [...current, { id, label: "新しい場所", left: 50, top: 50, active: true }]);
+    setPlacesDirty(true);
+  };
+
+  const removePlace = (id: string) => {
+    setPlaces((current) => current.filter((place) => place.id !== id));
+    setPlacesDirty(true);
+  };
+
+  const savePlaces = async () => {
+    const normalized = places.map((place) => ({
+      ...place,
+      label: place.label.trim(),
+      left: Math.round(Math.min(92, Math.max(8, place.left))),
+      top: Math.round(Math.min(88, Math.max(12, place.top))),
+    }));
+    if (!normalized.length || normalized.some((place) => !place.label) || !normalized.some((place) => place.active)) {
+      setError("場所名を入力し、少なくとも1つを有効にしてください。");
+      return;
+    }
+    if (new Set(normalized.map((place) => place.label)).size !== normalized.length) {
+      setError("同じ場所名は複数登録できません。");
+      return;
+    }
+    setPlacesSaving(true);
+    setError("");
+    try {
+      if (demoMode) {
+        setPlaces(normalized);
+        setPlacesDirty(false);
+      } else if (db) {
+        await setDoc(doc(db, "config", "places"), {
+          items: normalized,
+          placeIds: normalized.filter((place) => place.active).map((place) => place.id),
+          updatedAt: serverTimestamp(),
+        });
+      }
+    } catch {
+      setError("場所の選択肢を保存できませんでした。");
+    } finally {
+      setPlacesSaving(false);
+    }
+  };
+
   const switchDemoRole = (role: Role) => {
     const next = demoUsers.find((item) => item.role === role) ?? demoUsers[0];
     setProfile(next);
@@ -338,7 +427,7 @@ function App() {
 
   const visibleLocations = locations.filter((location) => {
     const keyword = query.toLowerCase();
-    return !keyword || location.displayName.toLowerCase().includes(keyword) || location.placeLabel.toLowerCase().includes(keyword);
+    return !keyword || location.displayName.toLowerCase().includes(keyword) || placeLabel(location, places).toLowerCase().includes(keyword);
   });
 
   if (!firebaseConfigured && !demoMode) return <SetupScreen />;
@@ -354,7 +443,7 @@ function App() {
         <nav className="side-nav" aria-label="メインメニュー">
           <button className={view === "home" ? "active" : ""} onClick={() => setView("home")}><Icon name="home"/><span>ホーム</span></button>
           <button className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}><Icon name="chat"/><span>AIに聞く</span><em>準備中</em></button>
-          {profile.role === "admin" && <button className={view === "admin" ? "active" : ""} onClick={() => setView("admin")}><Icon name="admin"/><span>ユーザー管理</span></button>}
+          {profile.role === "admin" && <button className={view === "admin" ? "active" : ""} onClick={() => setView("admin")}><Icon name="admin"/><span>管理</span></button>}
         </nav>
         <div className="sidebar-bottom">
           {demoMode && <div className="demo-switch"><span>デモ権限</span><select value={profile.role} onChange={(event) => switchDemoRole(event.target.value as Role)}>{Object.entries(roleLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>}
@@ -378,7 +467,7 @@ function App() {
               <section className="share-panel">
                 <div className="share-title"><div className={sharing ? "share-indicator on" : "share-indicator"}><Icon name="pin"/></div><div><h2>自分のいる場所を共有</h2><p>{sharing ? "選択した場所を共有しています。変更もできます。" : "校内の場所を選んで共有します。"}</p></div></div>
                 <div className="share-fields">
-                  <label>現在いる場所<span>一覧から選択</span><select value={placeId} onChange={(event) => setPlaceId(event.target.value as (typeof campusPlaces)[number]["id"])}>{campusPlaces.map((place) => <option key={place.id} value={place.id}>{place.label}</option>)}</select></label>
+                  <label>現在いる場所<span>一覧から選択</span><select value={placeId} onChange={(event) => setPlaceId(event.target.value)}>{places.filter((place) => place.active).map((place) => <option key={place.id} value={place.id}>{place.label}</option>)}</select></label>
                   <label>在席状況<span>生徒への案内</span><select value={availability} onChange={(event) => setAvailability(event.target.value as Availability)}>{Object.entries(availabilityLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
                   <label className="note-field">ひとこと<span>任意</span><input value={note} onChange={(event) => setNote(event.target.value)} maxLength={80} placeholder="例：16:30まで在室予定" /></label>
                   <div className="share-actions"><button className="button primary share-button" onClick={shareSelectedPlace} disabled={savingPlace}><Icon name="pin" size={18}/>{savingPlace ? "保存中…" : sharing ? "変更を保存" : "この場所を共有"}</button>{sharing && <button className="button stop" onClick={stopSharing}>共有を停止</button>}</div>
@@ -387,9 +476,9 @@ function App() {
             )}
 
             <div className="dashboard-grid">
-              <section className="map-card"><div className="section-title"><div><p className="eyebrow">CAMPUS MAP</p><h2>校内マップ</h2></div><span className="map-count">{visibleLocations.length} locations</span></div><CampusMap locations={visibleLocations}/></section>
+              <section className="map-card"><div className="section-title"><div><p className="eyebrow">CAMPUS MAP</p><h2>校内マップ</h2></div><span className="map-count">{visibleLocations.length} locations</span></div><CampusMap locations={visibleLocations} places={places}/></section>
               <section className="people-card"><div className="section-title"><div><p className="eyebrow">FACULTY</p><h2>先生を探す</h2></div></div><label className="search-box"><Icon name="search" size={18}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="名前・場所で検索" /></label><div className="teacher-list">
-                {visibleLocations.map((location) => <article className="teacher-row" key={location.id}><div className="avatar teacher-avatar">{avatarInitial(location.displayName)}<span className={`status-dot ${location.availability}`}/></div><div className="teacher-info"><div><strong>{location.displayName}</strong><span className={`availability ${location.availability}`}>{availabilityLabels[location.availability]}</span></div><p><Icon name="pin" size={14}/>{location.placeLabel}</p>{location.note && <small>{location.note}</small>}</div><div className="updated"><span>{timestampLabel(location)}</span><span>選択場所</span></div></article>)}
+                {visibleLocations.map((location) => <article className="teacher-row" key={location.id}><div className="avatar teacher-avatar">{avatarInitial(location.displayName)}<span className={`status-dot ${location.availability}`}/></div><div className="teacher-info"><div><strong>{location.displayName}</strong><span className={`availability ${location.availability}`}>{availabilityLabels[location.availability]}</span></div><p><Icon name="pin" size={14}/>{placeLabel(location, places)}</p>{location.note && <small>{location.note}</small>}</div><div className="updated"><span>{timestampLabel(location)}</span><span>選択場所</span></div></article>)}
                 {!visibleLocations.length && <div className="empty-state"><Icon name="pin" size={30}/><p>条件に合う先生が見つかりません</p></div>}
               </div></section>
             </div>
@@ -401,7 +490,33 @@ function App() {
         )}
 
         {view === "admin" && profile.role === "admin" && (
-          <div className="page-wrap"><section className="page-heading"><div><p className="eyebrow">ADMINISTRATION</p><h1>ユーザー管理</h1><p>利用者の権限と利用状態を管理します。</p></div></section><section className="admin-card"><div className="admin-summary"><div><span>{users.length}</span><small>登録ユーザー</small></div><div><span>{users.filter((user) => user.role === "teacher").length}</span><small>教職員</small></div><div><span>{users.filter((user) => user.role === "admin").length}</span><small>管理者</small></div></div><div className="user-table-wrap"><table><thead><tr><th>ユーザー</th><th>メール</th><th>権限</th><th>状態</th></tr></thead><tbody>{users.map((user) => <tr key={user.uid}><td><div className="table-user"><span className="avatar small">{avatarInitial(user.displayName)}</span><strong>{user.displayName}</strong></div></td><td>{user.email}</td><td><select value={user.role} onChange={(event) => updateRole(user.uid, event.target.value as Role)} disabled={user.uid === profile.uid}>{Object.entries(roleLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></td><td><span className="active-label"><i/>有効</span></td></tr>)}</tbody></table></div><p className="admin-note"><Icon name="shield" size={16}/>最初の管理者はFirebase Consoleから手動で設定してください。自分自身の管理者権限は画面から変更できません。</p></section></div>
+          <div className="page-wrap">
+            <section className="page-heading"><div><p className="eyebrow">ADMINISTRATION</p><h1>管理</h1><p>利用者の権限と、教職員が選べる場所を管理します。</p></div></section>
+            <section className="admin-card">
+              <div className="admin-summary"><div><span>{users.length}</span><small>登録ユーザー</small></div><div><span>{users.filter((user) => user.role === "teacher").length}</span><small>教職員</small></div><div><span>{users.filter((user) => user.role === "admin").length}</span><small>管理者</small></div></div>
+              <div className="admin-section-heading"><div><p className="eyebrow">USERS</p><h2>ユーザー管理</h2></div></div>
+              <div className="user-table-wrap"><table><thead><tr><th>ユーザー</th><th>メール</th><th>権限</th><th>状態</th></tr></thead><tbody>{users.map((user) => <tr key={user.uid}><td><div className="table-user"><span className="avatar small">{avatarInitial(user.displayName)}</span><strong>{user.displayName}</strong></div></td><td>{user.email}</td><td><select value={user.role} onChange={(event) => updateRole(user.uid, event.target.value as Role)} disabled={user.uid === profile.uid}>{Object.entries(roleLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></td><td><span className="active-label"><i/>有効</span></td></tr>)}</tbody></table></div>
+              <p className="admin-note"><Icon name="shield" size={16}/>自分自身の管理者権限は画面から変更できません。</p>
+            </section>
+
+            <section className="admin-card place-admin-card">
+              <div className="admin-section-heading place-heading"><div><p className="eyebrow">PLACE OPTIONS</p><h2>場所の選択肢</h2><p>名称、利用状態、校内マップ上の表示位置を編集できます。</p></div><button className="button add-place-button" onClick={addPlace}>＋ 場所を追加</button></div>
+              <div className="place-editor-labels"><span /><span>場所名</span><span>マップ横位置</span><span>マップ縦位置</span><span>利用</span><span /></div>
+              <div className="place-editor-list">
+                {places.map((place, index) => (
+                  <div className="place-editor-row" key={place.id}>
+                    <span className="place-number">{String(index + 1).padStart(2, "0")}</span>
+                    <input className="place-name-input" value={place.label} maxLength={40} onChange={(event) => updatePlace(place.id, { label: event.target.value })} aria-label={`${index + 1}番目の場所名`} />
+                    <label className="position-control"><span>横 <b>{place.left}%</b></span><input type="range" min="8" max="92" value={place.left} onChange={(event) => updatePlace(place.id, { left: Number(event.target.value) })}/></label>
+                    <label className="position-control"><span>縦 <b>{place.top}%</b></span><input type="range" min="12" max="88" value={place.top} onChange={(event) => updatePlace(place.id, { top: Number(event.target.value) })}/></label>
+                    <label className="place-toggle"><input type="checkbox" checked={place.active} onChange={(event) => updatePlace(place.id, { active: event.target.checked })}/><span>{place.active ? "有効" : "停止"}</span></label>
+                    <button className="remove-place" onClick={() => removePlace(place.id)} disabled={places.length === 1} aria-label={`${place.label}を削除`}>×</button>
+                  </div>
+                ))}
+              </div>
+              <div className="place-editor-footer"><p><Icon name="shield" size={16}/>無効にした場所は教職員の選択肢から外れます。削除しても過去履歴は作成されません。</p><button className="button primary" onClick={savePlaces} disabled={!placesDirty || placesSaving}>{placesSaving ? "保存中…" : placesDirty ? "変更を保存" : "保存済み"}</button></div>
+            </section>
+          </div>
         )}
       </main>
 

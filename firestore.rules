@@ -10,6 +10,10 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/config/auth).data;
     }
 
+    function placeConfig() {
+      return get(/databases/$(database)/documents/config/places).data;
+    }
+
     function isSchoolAccount() {
       return signedIn()
         && request.auth.token.email_verified == true
@@ -37,22 +41,18 @@ service cloud.firestore {
 
     function validLocation(data, uid) {
       return data.keys().hasAll([
-          'ownerId', 'displayName', 'role', 'placeId', 'placeLabel', 'note',
+          'ownerId', 'displayName', 'role', 'placeId', 'note',
           'availability', 'sharing', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'ownerId', 'displayName', 'photoURL', 'role', 'placeId', 'placeLabel',
-          'note', 'availability', 'sharing', 'updatedAt'
+          'ownerId', 'displayName', 'photoURL', 'role', 'placeId', 'note',
+          'availability', 'sharing', 'updatedAt'
         ])
         && data.ownerId == uid
         && data.role in ['teacher', 'admin']
-        && ((data.placeId == 'staff-room' && data.placeLabel == '本館 2F・職員室')
-          || (data.placeId == 'office' && data.placeLabel == '本館 1F・事務室')
-          || (data.placeId == 'nurse-room' && data.placeLabel == '南館 1F・保健室')
-          || (data.placeId == 'science-room' && data.placeLabel == '南館 3F・理科室')
-          || (data.placeId == 'gym' && data.placeLabel == '体育館')
-          || (data.placeId == 'ground' && data.placeLabel == 'グラウンド')
-          || (data.placeId == 'off-campus' && data.placeLabel == '校外'))
+        && data.placeId is string
+        && exists(/databases/$(database)/documents/config/places)
+        && data.placeId in placeConfig().placeIds
         && data.note is string && data.note.size() <= 80
         && data.availability in ['available', 'busy', 'away']
         && data.sharing == true
@@ -60,7 +60,7 @@ service cloud.firestore {
     }
 
     match /config/{document} {
-      allow read: if document == 'auth' && isSchoolAccount();
+      allow read: if document in ['auth', 'places'] && isSchoolAccount();
       allow write: if isAdmin();
     }
 
