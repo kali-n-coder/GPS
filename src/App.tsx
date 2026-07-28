@@ -256,9 +256,13 @@ function buildAiLocationRequest(question: string, locations: TeacherLocation[], 
 
   const locationSummary = (location: TeacherLocation) => {
     const ended = Boolean(location.availabilityUntil && location.availabilityUntil.toMillis() <= now);
-    const status = ended ? "対応予定終了" : availabilityLabels[location.availability];
+    const status = ended
+      ? "対応予定は終了しています"
+      : location.availability === "available"
+        ? "対応できます"
+        : `${availabilityLabels[location.availability]}です`;
     const stale = isStale(location, now) ? "（30分以上更新がないため要確認）" : "";
-    return `${location.displayName}は「${placeLabel(location, places)}」、${status}です${stale}。`;
+    return `${location.displayName}は「${placeLabel(location, places)}」にいます。${status}${stale}。`;
   };
   let fallbackAnswer = targetLocations.map(locationSummary).join(" ");
   if (requestKind === "availability") {

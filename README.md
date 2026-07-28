@@ -125,4 +125,4 @@ Gemini Developer APIをFirebase AI Logic経由で呼び出し、無料枠対応�
 
 利用者の質問文をそのまま送信せず、ブラウザ内で対象教職員を特定して `STAFF_1` などの匿名IDに置換します。Geminiには匿名ID、選択場所、在席状況、対応予定時刻、情報の鮮度だけを渡し、回答後にブラウザ内で教職員名へ戻します。Firestore全体、メールアドレス、ユーザーID、ひとこと欄は送信しません。
 
-本番環境ではFirebase App CheckへWebアプリを登録し、GitHub Pagesのドメインに限定したreCAPTCHA EnterpriseサイトキーをRepository Variable `VITE_RECAPTCHA_ENTERPRISE_SITE_KEY` に設定しています。クライアントはApp Checkの自動更新トークンとリプレイ保護用の限定使用トークンを利用します。
+Firebase App CheckとGitHub Pagesのドメインに限定したreCAPTCHA Enterpriseサイトキーは登録済みです。ただし、校内端末・ブラウザによってreCAPTCHAトークンを取得できない事象が確認されたため、プロトタイプ期間中はFirebase AI LogicのApp Checkを監視モード（非強制）にしています。互換性を確認後、クライアント側のApp Check初期化と強制適用を再度有効化します。
