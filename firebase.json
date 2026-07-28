@@ -3,10 +3,20 @@
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
   },
+  "auth": {
+    "providers": {
+      "googleSignIn": {
+        "oAuthBrandDisplayName": "Campus Compass",
+        "supportEmail": "christianwolff365@gmail.com",
+        "authorizedRedirectUris": [
+          "https://kali-n-coder.github.io/GPS/"
+        ]
+      }
+    }
+  },
   "hosting": {
     "public": "dist",
     "ignore": ["firebase.json", "**/.*", "**/node_modules/**"],
     "rewrites": [{ "source": "**", "destination": "/index.html" }]
   }
 }
-

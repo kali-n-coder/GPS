@@ -220,12 +220,17 @@ function App() {
         const userRef = doc(firestore, "users", user.uid);
         const snapshot = await getDoc(userRef);
         if (!snapshot.exists()) {
+          const authConfigSnapshot = await getDoc(doc(firestore, "config", "auth"));
+          const initialAdminEmail = authConfigSnapshot.exists()
+            ? String(authConfigSnapshot.data().initialAdminEmail || "").toLowerCase()
+            : "";
+          const initialRole: Role = user.email?.toLowerCase() === initialAdminEmail ? "admin" : "student";
           const newProfile: AppUser = {
             uid: user.uid,
             displayName: user.displayName || "名称未設定",
             email: user.email || "",
             ...(user.photoURL ? { photoURL: user.photoURL } : {}),
-            role: "student",
+            role: initialRole,
             active: true,
           };
           await setDoc(userRef, { ...newProfile, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });

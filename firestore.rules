@@ -57,7 +57,8 @@ service cloud.firestore {
     }
 
     match /config/{document} {
-      allow read, write: if isAdmin();
+      allow read: if document == 'auth' && isSchoolAccount();
+      allow write: if isAdmin();
     }
 
     match /users/{uid} {
@@ -76,7 +77,10 @@ service cloud.firestore {
         && request.resource.data.email == request.auth.token.email
         && request.resource.data.displayName is string
         && request.resource.data.displayName.size() <= 100
-        && request.resource.data.role == 'student'
+        && ((request.resource.data.email == authConfig().initialAdminEmail
+            && request.resource.data.role == 'admin')
+          || (request.resource.data.email != authConfig().initialAdminEmail
+            && request.resource.data.role == 'student'))
         && request.resource.data.active == true
         && request.resource.data.createdAt == request.time
         && request.resource.data.updatedAt == request.time;

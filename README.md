@@ -41,7 +41,7 @@ Firebase設定がない開発環境では、自動的にデモモードになり
 2. Authentication → Sign-in method で Google を有効化します。
 3. Authentication → Settings → Authorized domains に `kali-n-coder.github.io` を追加します。
 4. Firestore Databaseを本番モードで作成します（校内に近いリージョンを推奨）。
-5. Firestore Consoleで `config/auth` ドキュメントを作り、文字列フィールド `allowedEmailDomain` に学校のGoogle Workspaceドメイン（例: `example.ed.jp`）を設定します。この設定がない間は全アクセスが拒否されます。
+5. Firestore Consoleで `config/auth` ドキュメントを作り、文字列フィールド `allowedEmailDomain` に学校のGoogle Workspaceドメイン（例: `example.ed.jp`）、`initialAdminEmail` に最初の管理者メールを設定します。この設定がない間は全アクセスが拒否されます。
 6. Webアプリを追加し、表示されたFirebase構成値を控えます。
 7. ルールをデプロイします。
 
@@ -54,11 +54,13 @@ firebase deploy --only firestore:rules,firestore:indexes
 
 ### 最初の管理者
 
-1. 対象ユーザーに一度ログインしてもらいます。
-2. Firestore Consoleの `users/{uid}` を開き、`role` を `student` から `admin` に変更します。
-3. 以降の権限変更はアプリの「ユーザー管理」から行えます。
+`config/auth` の `initialAdminEmail` と一致するユーザーは、初回ログイン時に自動で `admin` として登録されます。以降の権限変更はアプリの「ユーザー管理」から行えます。
 
-Firebase Console / Admin SDKからの操作はFirestore Security Rulesの対象外なので、この初期設定が可能です。
+初期管理者が登録された後に `initialAdminEmail` を変更しても、既存ユーザーの権限は自動変更されません。
+
+### 学校ドメインを後から変更する
+
+Firestoreの `config/auth.allowedEmailDomain` と、GitHub Repository Variableの `VITE_ALLOWED_EMAIL_DOMAIN` を同じ値に更新し、GitHub Pagesを再デプロイします。既存ユーザーを無効にする必要がある場合は、管理画面から対象ユーザーの状態も変更してください。
 
 ## GitHub Pages公開設定
 
@@ -80,7 +82,7 @@ GitHubの `Settings → Secrets and variables → Actions → Variables` に、�
 
 ```text
 config/auth
-  allowedEmailDomain
+  allowedEmailDomain, initialAdminEmail
 
 users/{uid}
   uid, displayName, email, photoURL, role, active, createdAt, updatedAt
