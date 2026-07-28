@@ -194,6 +194,7 @@ type AiLocationRequest = {
   prompt?: string;
   aliases?: Map<string, string>;
   localAnswer?: string;
+  fallbackAnswer?: string;
 };
 
 function nameMatchesQuestion(displayName: string, question: string) {
@@ -221,16 +222,20 @@ function buildAiLocationRequest(question: string, locations: TeacherLocation[], 
 
   let targetLocations: TeacherLocation[] = [];
   let intent = "";
+  let requestKind: "teacher" | "place" | "availability" | "all" = "all";
   if (matchedTeachers.length) {
     targetLocations = matchedTeachers;
     intent = "指定された教職員の現在地と対応状況を案内する";
+    requestKind = "teacher";
   } else if (matchedPlaceIds.length) {
     targetLocations = locations.filter((location) => matchedPlaceIds.includes(location.placeId));
     if (!targetLocations.length) return { localAnswer: "その場所を共有している教職員は現在いません。" };
     intent = "指定された場所にいる教職員を案内する";
+    requestKind = "place";
   } else if (asksAvailability) {
     targetLocations = locations;
     intent = "現在対応できる教職員を優先して案内する";
+    requestKind = "availability";
   } else if (asksEveryone) {
     targetLocations = locations;
     intent = "現在場所を共有している教職員を簡潔に案内する";
@@ -249,8 +254,26 @@ function buildAiLocationRequest(question: string, locations: TeacherLocation[], 
     return `${alias} | 場所: ${placeLabel(location, places)} | 状況: ${status} | 対応予定: ${until}まで | 鮮度: ${freshness}`;
   }).join("\n");
 
+  const locationSummary = (location: TeacherLocation) => {
+    const ended = Boolean(location.availabilityUntil && location.availabilityUntil.toMillis() <= now);
+    const status = ended ? "対応予定終了" : availabilityLabels[location.availability];
+    const stale = isStale(location, now) ? "（30分以上更新がないため要確認）" : "";
+    return `${location.displayName}は「${placeLabel(location, places)}」、${status}です${stale}。`;
+  };
+  let fallbackAnswer = targetLocations.map(locationSummary).join(" ");
+  if (requestKind === "availability") {
+    const availableLocations = targetLocations.filter((location) => location.availability === "available"
+      && (!location.availabilityUntil || location.availabilityUntil.toMillis() > now));
+    fallbackAnswer = availableLocations.length
+      ? availableLocations.map(locationSummary).join(" ")
+      : "現在、対応可能として共有している教職員はいません。";
+  } else if (requestKind === "place") {
+    fallbackAnswer = `${targetLocations.map((location) => location.displayName).join("、")}が現在その場所を共有しています。`;
+  }
+
   return {
     aliases,
+    fallbackAnswer,
     prompt: `あなたは学校内Webアプリ「ティーポジ」の案内AIです。
 以下の匿名化された現在データだけを使い、日本語で1〜3文の簡潔な回答をしてください。
 推測やデータにない情報は追加しないでください。30分以上更新がない情報には「要確認」と添えてください。
@@ -266,14 +289,6 @@ function restoreTeacherNames(text: string, aliases: Map<string, string>) {
   let restored = text.replace(/\*\*/g, "").trim();
   for (const [alias, displayName] of aliases) restored = restored.replaceAll(alias, displayName);
   return restored.slice(0, 600);
-}
-
-function demoAnswer(aliases: Map<string, string>, locations: TeacherLocation[], places: CampusPlace[]) {
-  const names = [...aliases.values()];
-  return names.map((name) => {
-    const location = locations.find((item) => item.displayName === name);
-    return location ? `${name}は現在「${placeLabel(location, places)}」です。` : "";
-  }).filter(Boolean).join(" ") || "条件に合う教職員は見つかりませんでした。";
 }
 
 function CampusMap({ locations, places, mapImageUrl = "" }: { locations: TeacherLocation[]; places: CampusPlace[]; mapImageUrl?: string }) {
@@ -703,7 +718,7 @@ function App() {
     setChatSending(true);
     try {
       if (demoMode || !aiModel) {
-        setChatMessages((current) => [...current, { from: "assistant", text: `${demoAnswer(request.aliases!, activeLocations, places)}（デモ回答）` }]);
+        setChatMessages((current) => [...current, { from: "assistant", text: `${request.fallbackAnswer || "回答できませんでした。"}（デモ回答）` }]);
         return;
       }
       const result = await aiModel.generateContent(request.prompt);
@@ -712,11 +727,14 @@ function App() {
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "";
       const rateLimited = /429|quota|resource.?exhausted/i.test(message);
+      console.error("Gemini request failed", caught);
       setChatMessages((current) => [...current, {
         from: "assistant",
-        text: rateLimited
-          ? "Gemini APIの無料枠または一時的な利用上限に達しました。少し時間をおいてお試しください。"
-          : "AIに接続できませんでした。時間をおいてもう一度お試しください。",
+        text: request.fallbackAnswer
+          ? `${request.fallbackAnswer}（${rateLimited ? "AIの利用上限に達したため" : "AI通信に失敗したため"}、アプリ内の最新データから回答しました）`
+          : rateLimited
+            ? "Gemini APIの無料枠または一時的な利用上限に達しました。少し時間をおいてお試しください。"
+            : "AIに接続できませんでした。時間をおいてもう一度お試しください。",
       }]);
     } finally {
       setChatSending(false);
