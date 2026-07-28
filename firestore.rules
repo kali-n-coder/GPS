@@ -37,19 +37,22 @@ service cloud.firestore {
 
     function validLocation(data, uid) {
       return data.keys().hasAll([
-          'ownerId', 'displayName', 'role', 'latitude', 'longitude', 'accuracy',
-          'placeLabel', 'note', 'availability', 'sharing', 'updatedAt'
+          'ownerId', 'displayName', 'role', 'placeId', 'placeLabel', 'note',
+          'availability', 'sharing', 'updatedAt'
         ])
         && data.keys().hasOnly([
-          'ownerId', 'displayName', 'photoURL', 'role', 'latitude', 'longitude',
-          'accuracy', 'placeLabel', 'note', 'availability', 'sharing', 'updatedAt'
+          'ownerId', 'displayName', 'photoURL', 'role', 'placeId', 'placeLabel',
+          'note', 'availability', 'sharing', 'updatedAt'
         ])
         && data.ownerId == uid
         && data.role in ['teacher', 'admin']
-        && data.latitude is number && data.latitude >= -90 && data.latitude <= 90
-        && data.longitude is number && data.longitude >= -180 && data.longitude <= 180
-        && data.accuracy is number && data.accuracy >= 0
-        && data.placeLabel is string && data.placeLabel.size() <= 80
+        && ((data.placeId == 'staff-room' && data.placeLabel == '本館 2F・職員室')
+          || (data.placeId == 'office' && data.placeLabel == '本館 1F・事務室')
+          || (data.placeId == 'nurse-room' && data.placeLabel == '南館 1F・保健室')
+          || (data.placeId == 'science-room' && data.placeLabel == '南館 3F・理科室')
+          || (data.placeId == 'gym' && data.placeLabel == '体育館')
+          || (data.placeId == 'ground' && data.placeLabel == 'グラウンド')
+          || (data.placeId == 'off-campus' && data.placeLabel == '校外'))
         && data.note is string && data.note.size() <= 80
         && data.availability in ['available', 'busy', 'away']
         && data.sharing == true

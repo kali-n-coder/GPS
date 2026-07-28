@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import type { User } from "firebase/auth";
 import { GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
@@ -29,15 +29,23 @@ const availabilityLabels: Record<Availability, string> = {
   away: "離席中",
 };
 
+const campusPlaces = [
+  { id: "staff-room", label: "本館 2F・職員室", left: 49, top: 29 },
+  { id: "office", label: "本館 1F・事務室", left: 62, top: 37 },
+  { id: "nurse-room", label: "南館 1F・保健室", left: 73, top: 70 },
+  { id: "science-room", label: "南館 3F・理科室", left: 67, top: 62 },
+  { id: "gym", label: "体育館", left: 21, top: 73 },
+  { id: "ground", label: "グラウンド", left: 17, top: 45 },
+  { id: "off-campus", label: "校外", left: 87, top: 19 },
+] as const;
+
 const demoLocations: TeacherLocation[] = [
   {
     id: "demo-tanaka",
     ownerId: "demo-tanaka",
     displayName: "田中 美咲",
     role: "teacher",
-    latitude: 35.68124,
-    longitude: 139.76712,
-    accuracy: 12,
+    placeId: "staff-room",
     placeLabel: "本館 2F・職員室",
     note: "16:30まで在室予定",
     availability: "available",
@@ -48,9 +56,7 @@ const demoLocations: TeacherLocation[] = [
     ownerId: "demo-sato",
     displayName: "佐藤 健太",
     role: "teacher",
-    latitude: 35.6817,
-    longitude: 139.76664,
-    accuracy: 18,
+    placeId: "gym",
     placeLabel: "体育館",
     note: "2年B組の授業中",
     availability: "busy",
@@ -61,9 +67,7 @@ const demoLocations: TeacherLocation[] = [
     ownerId: "demo-yamada",
     displayName: "山田 京子",
     role: "teacher",
-    latitude: 35.68082,
-    longitude: 139.76758,
-    accuracy: 24,
+    placeId: "nurse-room",
     placeLabel: "南館 1F・保健室",
     note: "",
     availability: "away",
@@ -109,13 +113,6 @@ function timestampLabel(location: TeacherLocation) {
 }
 
 function CampusMap({ locations }: { locations: TeacherLocation[] }) {
-  const bounds = useMemo(() => {
-    if (!locations.length) return null;
-    const lats = locations.map((item) => item.latitude);
-    const lngs = locations.map((item) => item.longitude);
-    return { minLat: Math.min(...lats), maxLat: Math.max(...lats), minLng: Math.min(...lngs), maxLng: Math.max(...lngs) };
-  }, [locations]);
-
   return (
     <div className="campus-map" aria-label="教職員の位置概略図">
       <div className="map-grid" />
@@ -123,26 +120,23 @@ function CampusMap({ locations }: { locations: TeacherLocation[] }) {
       <span className="building building-b">南館</span>
       <span className="building building-c">体育館</span>
       {locations.map((location, index) => {
-        const latRange = Math.max((bounds?.maxLat ?? 0) - (bounds?.minLat ?? 0), 0.001);
-        const lngRange = Math.max((bounds?.maxLng ?? 0) - (bounds?.minLng ?? 0), 0.001);
-        const left = 18 + ((location.longitude - (bounds?.minLng ?? 0)) / lngRange) * 64;
-        const top = 76 - ((location.latitude - (bounds?.minLat ?? 0)) / latRange) * 54;
+        const place = campusPlaces.find((item) => item.id === location.placeId) ?? campusPlaces[0];
+        const samePlaceIndex = locations.slice(0, index).filter((item) => item.placeId === location.placeId).length;
+        const left = place.left + (samePlaceIndex % 3) * 4;
+        const top = place.top + Math.floor(samePlaceIndex / 3) * 6;
         return (
-          <a
+          <span
             key={location.id}
             className={`map-marker marker-${index % 3}`}
             style={{ left: `${left}%`, top: `${top}%` }}
-            href={`https://www.google.com/maps?q=${location.latitude},${location.longitude}`}
-            target="_blank"
-            rel="noreferrer"
             title={`${location.displayName}・${location.placeLabel}`}
           >
             {avatarInitial(location.displayName)}
-          </a>
+          </span>
         );
       })}
       {!locations.length && <p className="map-empty">現在、共有中の教職員はいません</p>}
-      <div className="map-legend"><span />位置は概略表示です</div>
+      <div className="map-legend"><span />選択された場所を表示</div>
     </div>
   );
 }
@@ -155,14 +149,14 @@ function LoginScreen({ onLogin, busy, error }: { onLogin: () => void; busy: bool
         <div className="login-illustration"><span className="radar-ring ring-one"/><span className="radar-ring ring-two"/><span className="login-pin"><Icon name="pin" size={38}/></span></div>
         <p className="eyebrow">TEACHERS LOCATION</p>
         <h1>先生を、すぐ見つける。</h1>
-        <p className="login-copy">教職員が共有した現在地と在席状況を、校内アカウントから確認できます。</p>
+        <p className="login-copy">教職員が選択して共有した校内の場所と在席状況を、校内アカウントから確認できます。</p>
         {error && <p className="error-message" role="alert">{error}</p>}
         <button className="button primary login-button" onClick={onLogin} disabled={busy}>
           <span className="google-g">G</span>{busy ? "ログインしています…" : "Googleでログイン"}
         </button>
         <p className="login-note"><Icon name="shield" size={16}/> 学校が許可したGoogleアカウントのみ利用できます</p>
       </section>
-      <p className="login-footer">位置情報は共有を開始した教職員についてのみ表示されます。</p>
+      <p className="login-footer">教職員が選択した校内の場所だけを表示します。GPSは使用しません。</p>
     </main>
   );
 }
@@ -196,15 +190,14 @@ function App() {
   const [view, setView] = useState<View>("home");
   const [query, setQuery] = useState("");
   const [availability, setAvailability] = useState<Availability>("available");
-  const [placeLabel, setPlaceLabel] = useState("本館 2F・職員室");
+  const [placeId, setPlaceId] = useState<(typeof campusPlaces)[number]["id"]>("staff-room");
   const [note, setNote] = useState("");
   const [sharing, setSharing] = useState(false);
-  const [locating, setLocating] = useState(false);
+  const [savingPlace, setSavingPlace] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<Array<{ from: "user" | "assistant"; text: string }>>([
     { from: "assistant", text: "こんにちは。将来ここから「田中先生はどこ？」のように質問できる予定です。現在AI機能は準備中です。" },
   ]);
-  const watchId = useRef<number | null>(null);
 
   useEffect(() => {
     if (!auth || !db) return;
@@ -249,8 +242,10 @@ function App() {
   useEffect(() => {
     if (!db || !profile) return;
     const stopLocations = onSnapshot(collection(db, "locations"), (snapshot) => {
-      setLocations(snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as TeacherLocation).filter((item) => item.sharing));
-    }, () => setError("位置情報を読み込めませんでした。管理者にお問い合わせください。"));
+      const loadedLocations = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as TeacherLocation).filter((item) => item.sharing);
+      setLocations(loadedLocations);
+      setSharing(loadedLocations.some((item) => item.ownerId === profile.uid));
+    }, () => setError("場所情報を読み込めませんでした。管理者にお問い合わせください。"));
     return stopLocations;
   }, [profile]);
 
@@ -260,10 +255,6 @@ function App() {
       setUsers(snapshot.docs.map((item) => ({ uid: item.id, ...item.data() }) as AppUser));
     });
   }, [profile?.role]);
-
-  useEffect(() => () => {
-    if (watchId.current !== null) navigator.geolocation.clearWatch(watchId.current);
-  }, []);
 
   const handleLogin = async () => {
     if (!auth) return;
@@ -284,57 +275,39 @@ function App() {
     }
   };
 
-  const writePosition = async (position: GeolocationPosition) => {
+  const shareSelectedPlace = async () => {
     if (!profile) return;
+    const selectedPlace = campusPlaces.find((item) => item.id === placeId) ?? campusPlaces[0];
+    setSavingPlace(true);
+    setError("");
     const location: Omit<TeacherLocation, "id" | "updatedAt"> = {
       ownerId: profile.uid,
       displayName: profile.displayName,
       ...(profile.photoURL ? { photoURL: profile.photoURL } : {}),
       role: profile.role === "student" ? "teacher" : profile.role,
-      latitude: position.coords.latitude,
-      longitude: position.coords.longitude,
-      accuracy: Math.round(position.coords.accuracy),
-      placeLabel,
+      placeId: selectedPlace.id,
+      placeLabel: selectedPlace.label,
       note,
       availability,
       sharing: true,
     };
     if (demoMode) {
       setLocations((current) => [{ id: profile.uid, ...location }, ...current.filter((item) => item.ownerId !== profile.uid)]);
+      setSharing(true);
+      setSavingPlace(false);
       return;
     }
-    if (db) await setDoc(doc(db, "locations", profile.uid), { ...location, updatedAt: serverTimestamp() });
-  };
-
-  const startSharing = () => {
-    if (!navigator.geolocation) {
-      setError("このブラウザは位置情報に対応していません。");
-      return;
+    try {
+      if (db) await setDoc(doc(db, "locations", profile.uid), { ...location, updatedAt: serverTimestamp() });
+      setSharing(true);
+    } catch {
+      setError("場所を保存できませんでした。");
+    } finally {
+      setSavingPlace(false);
     }
-    setLocating(true);
-    setError("");
-    watchId.current = navigator.geolocation.watchPosition(
-      async (position) => {
-        try {
-          await writePosition(position);
-          setSharing(true);
-        } catch {
-          setError("位置情報を保存できませんでした。");
-        } finally {
-          setLocating(false);
-        }
-      },
-      (geoError) => {
-        setLocating(false);
-        setError(geoError.code === 1 ? "位置情報の利用が許可されませんでした。ブラウザの設定をご確認ください。" : "現在地を取得できませんでした。");
-      },
-      { enableHighAccuracy: true, maximumAge: 20_000, timeout: 15_000 },
-    );
   };
 
   const stopSharing = async () => {
-    if (watchId.current !== null) navigator.geolocation.clearWatch(watchId.current);
-    watchId.current = null;
     setSharing(false);
     if (demoMode && profile) setLocations((current) => current.filter((item) => item.ownerId !== profile.uid));
     else if (db && profile) await deleteDoc(doc(db, "locations", profile.uid));
@@ -397,18 +370,18 @@ function App() {
 
         {view === "home" && (
           <div className="page-wrap">
-            <section className="page-heading"><div><p className="eyebrow">TODAY'S CAMPUS</p><h1>こんにちは、{profile.displayName.split(" ")[0]}さん</h1><p>校内にいる先生の現在地を確認できます。</p></div><div className="live-pill"><span/> {locations.length}人が共有中</div></section>
+            <section className="page-heading"><div><p className="eyebrow">TODAY'S CAMPUS</p><h1>こんにちは、{profile.displayName.split(" ")[0]}さん</h1><p>先生が選択している校内の場所を確認できます。</p></div><div className="live-pill"><span/> {locations.length}人が共有中</div></section>
 
-            <section className="privacy-strip"><Icon name="shield" size={21}/><div><strong>位置情報は校内アカウント限定です</strong><span>教職員が共有を開始している間だけ表示されます。位置は目安としてご利用ください。</span></div></section>
+            <section className="privacy-strip"><Icon name="shield" size={21}/><div><strong>GPS・端末の位置情報は使用しません</strong><span>教職員が自分で選択して共有した校内の場所だけを表示します。</span></div></section>
 
             {canShare && (
               <section className="share-panel">
-                <div className="share-title"><div className={sharing ? "share-indicator on" : "share-indicator"}><Icon name="pin"/></div><div><h2>自分の位置を共有</h2><p>{sharing ? "現在、あなたの位置を共有しています。" : "共有はいつでも停止できます。"}</p></div></div>
+                <div className="share-title"><div className={sharing ? "share-indicator on" : "share-indicator"}><Icon name="pin"/></div><div><h2>自分のいる場所を共有</h2><p>{sharing ? "選択した場所を共有しています。変更もできます。" : "校内の場所を選んで共有します。"}</p></div></div>
                 <div className="share-fields">
-                  <label>校内表示<span>GPSと一緒に表示されます</span><select value={placeLabel} onChange={(event) => setPlaceLabel(event.target.value)}><option>本館 2F・職員室</option><option>本館 1F・事務室</option><option>南館 1F・保健室</option><option>南館 3F・理科室</option><option>体育館</option><option>グラウンド</option><option>校外</option></select></label>
+                  <label>現在いる場所<span>一覧から選択</span><select value={placeId} onChange={(event) => setPlaceId(event.target.value as (typeof campusPlaces)[number]["id"])}>{campusPlaces.map((place) => <option key={place.id} value={place.id}>{place.label}</option>)}</select></label>
                   <label>在席状況<span>生徒への案内</span><select value={availability} onChange={(event) => setAvailability(event.target.value as Availability)}>{Object.entries(availabilityLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
                   <label className="note-field">ひとこと<span>任意</span><input value={note} onChange={(event) => setNote(event.target.value)} maxLength={80} placeholder="例：16:30まで在室予定" /></label>
-                  {sharing ? <button className="button stop" onClick={stopSharing}>共有を停止</button> : <button className="button primary share-button" onClick={startSharing} disabled={locating}><Icon name="pin" size={18}/>{locating ? "現在地を取得中…" : "現在地を共有"}</button>}
+                  <div className="share-actions"><button className="button primary share-button" onClick={shareSelectedPlace} disabled={savingPlace}><Icon name="pin" size={18}/>{savingPlace ? "保存中…" : sharing ? "変更を保存" : "この場所を共有"}</button>{sharing && <button className="button stop" onClick={stopSharing}>共有を停止</button>}</div>
                 </div>
               </section>
             )}
@@ -416,7 +389,7 @@ function App() {
             <div className="dashboard-grid">
               <section className="map-card"><div className="section-title"><div><p className="eyebrow">CAMPUS MAP</p><h2>校内マップ</h2></div><span className="map-count">{visibleLocations.length} locations</span></div><CampusMap locations={visibleLocations}/></section>
               <section className="people-card"><div className="section-title"><div><p className="eyebrow">FACULTY</p><h2>先生を探す</h2></div></div><label className="search-box"><Icon name="search" size={18}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="名前・場所で検索" /></label><div className="teacher-list">
-                {visibleLocations.map((location) => <article className="teacher-row" key={location.id}><div className="avatar teacher-avatar">{avatarInitial(location.displayName)}<span className={`status-dot ${location.availability}`}/></div><div className="teacher-info"><div><strong>{location.displayName}</strong><span className={`availability ${location.availability}`}>{availabilityLabels[location.availability]}</span></div><p><Icon name="pin" size={14}/>{location.placeLabel}</p>{location.note && <small>{location.note}</small>}</div><div className="updated"><span>{timestampLabel(location)}</span><a href={`https://www.google.com/maps?q=${location.latitude},${location.longitude}`} target="_blank" rel="noreferrer">地図 ↗</a></div></article>)}
+                {visibleLocations.map((location) => <article className="teacher-row" key={location.id}><div className="avatar teacher-avatar">{avatarInitial(location.displayName)}<span className={`status-dot ${location.availability}`}/></div><div className="teacher-info"><div><strong>{location.displayName}</strong><span className={`availability ${location.availability}`}>{availabilityLabels[location.availability]}</span></div><p><Icon name="pin" size={14}/>{location.placeLabel}</p>{location.note && <small>{location.note}</small>}</div><div className="updated"><span>{timestampLabel(location)}</span><span>選択場所</span></div></article>)}
                 {!visibleLocations.length && <div className="empty-state"><Icon name="pin" size={30}/><p>条件に合う先生が見つかりません</p></div>}
               </div></section>
             </div>
@@ -424,7 +397,7 @@ function App() {
         )}
 
         {view === "chat" && (
-          <div className="page-wrap narrow-page"><section className="page-heading"><div><p className="eyebrow">COMING SOON</p><h1>AIに居場所を聞く</h1><p>将来、Gemini APIと接続するためのチャット画面です。</p></div></section><section className="chat-card"><div className="chat-notice"><span>β</span><div><strong>AI機能は準備中です</strong><p>現在は質問を送信しても位置情報の検索は行われません。</p></div></div><div className="messages">{chatMessages.map((message, index) => <div key={index} className={`message ${message.from}`}><span>{message.from === "assistant" ? "AI" : avatarInitial(profile.displayName)}</span><p>{message.text}</p></div>)}</div><div className="suggestions"><span>質問例</span><button onClick={() => setChatInput("田中先生はどこにいますか？")}>田中先生はどこ？</button><button onClick={() => setChatInput("今、対応できる先生を教えて")}>対応できる先生は？</button></div><form className="chat-form" onSubmit={sendChat}><input value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder="先生の名前や場所を入力…"/><button aria-label="送信"><Icon name="send"/></button></form></section></div>
+          <div className="page-wrap narrow-page"><section className="page-heading"><div><p className="eyebrow">COMING SOON</p><h1>AIに居場所を聞く</h1><p>将来、Gemini APIと接続するためのチャット画面です。</p></div></section><section className="chat-card"><div className="chat-notice"><span>β</span><div><strong>AI機能は準備中です</strong><p>現在は質問を送信しても選択場所の検索は行われません。</p></div></div><div className="messages">{chatMessages.map((message, index) => <div key={index} className={`message ${message.from}`}><span>{message.from === "assistant" ? "AI" : avatarInitial(profile.displayName)}</span><p>{message.text}</p></div>)}</div><div className="suggestions"><span>質問例</span><button onClick={() => setChatInput("田中先生はどこにいますか？")}>田中先生はどこ？</button><button onClick={() => setChatInput("今、対応できる先生を教えて")}>対応できる先生は？</button></div><form className="chat-form" onSubmit={sendChat}><input value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder="先生の名前や場所を入力…"/><button aria-label="送信"><Icon name="send"/></button></form></section></div>
         )}
 
         {view === "admin" && profile.role === "admin" && (

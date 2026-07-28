@@ -20,13 +20,10 @@ export interface TeacherLocation {
   displayName: string;
   photoURL?: string;
   role: "teacher" | "admin";
-  latitude: number;
-  longitude: number;
-  accuracy: number;
+  placeId: string;
   placeLabel: string;
   note: string;
   availability: Availability;
   sharing: boolean;
   updatedAt?: Timestamp;
 }
-

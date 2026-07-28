@@ -1,14 +1,14 @@
 # Teachers-position（ティーポジ）
 
-校内アカウントで、共有中の教職員の現在地・在席状況をリアルタイムに確認するWebアプリです。GitHub Pagesでフロントエンドを公開し、Firebase AuthenticationとCloud Firestoreを利用します。
+校内アカウントで、教職員が選択して共有した校内の場所・在席状況をリアルタイムに確認するWebアプリです。GitHub Pagesでフロントエンドを公開し、Firebase AuthenticationとCloud Firestoreを利用します。
 
 ## 現在の機能
 
 - Googleアカウント認証
 - `student` / `teacher` / `admin` の3権限
-- 教職員本人による、明示的な位置共有の開始・停止
-- GPS座標、校内表示、在席状況、ひとことのリアルタイム表示
-- 名前・場所検索とGoogle Mapsへのリンク
+- 教職員本人による、校内の場所選択と共有の開始・停止
+- 選択場所、在席状況、ひとことのリアルタイム表示
+- 名前・場所検索と校内マップ表示
 - 管理者によるユーザー権限変更
 - 将来Gemini APIを接続するためのチャットUI（現在は未接続）
 - GitHub ActionsによるGitHub Pages自動デプロイ
@@ -88,18 +88,18 @@ users/{uid}
   uid, displayName, email, photoURL, role, active, createdAt, updatedAt
 
 locations/{uid}
-  ownerId, displayName, photoURL, role, latitude, longitude, accuracy,
-  placeLabel, note, availability, sharing, updatedAt
+  ownerId, displayName, photoURL, role, placeId, placeLabel, note,
+  availability, sharing, updatedAt
 ```
 
-## 位置情報と運用上の注意
+## 場所共有と運用上の注意
 
-- ブラウザの位置情報はHTTPS（またはlocalhost）でのみ利用できます。GitHub PagesはHTTPSです。
-- 共有は教職員本人の操作で開始し、停止するとFirestoreの位置ドキュメントを削除します。
-- GPSは校舎内や高層階では誤差が大きくなるため、`placeLabel` を併記しています。
+- GPSやブラウザの位置情報APIは使用しません。
+- 教職員が校内の選択肢から自分のいる場所を選び、共有します。
+- 共有を停止するとFirestoreの場所ドキュメントを削除します。
 - 利用開始前に学校の個人情報保護方針、保護者・教職員への説明、保存期間、緊急時対応を確認してください。
-- 位置履歴は保存しません。将来履歴を追加する場合は、目的・保存期間・閲覧権限を別途設計してください。
+- 場所の履歴は保存しません。将来履歴を追加する場合は、目的・保存期間・閲覧権限を別途設計してください。
 
 ## Gemini API接続時の方針
 
-APIキーをGitHub Pagesへ埋め込んではいけません。Firebase FunctionsまたはCloud Runを経由し、認証済みユーザーの権限を検証してから、必要最小限の位置情報だけをGeminiへ渡してください。現時点のチャット欄はUIのみで、外部APIへの送信は行いません。
+APIキーをGitHub Pagesへ埋め込んではいけません。Firebase FunctionsまたはCloud Runを経由し、認証済みユーザーの権限を検証してから、必要最小限の選択場所だけをGeminiへ渡してください。現時点のチャット欄はUIのみで、外部APIへの送信は行いません。
