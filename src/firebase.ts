@@ -35,7 +35,7 @@ export const aiModel = app
       {
         model: "gemini-3.5-flash-lite",
         generationConfig: {
-          maxOutputTokens: 220,
+          maxOutputTokens: 400,
           temperature: 0.15,
         },
       },
