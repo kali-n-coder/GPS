@@ -1,0 +1,105 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function authConfig() {
+      return get(/databases/$(database)/documents/config/auth).data;
+    }
+
+    function isSchoolAccount() {
+      return signedIn()
+        && request.auth.token.email_verified == true
+        && exists(/databases/$(database)/documents/config/auth)
+        && request.auth.token.email.matches('.*@' + authConfig().allowedEmailDomain);
+    }
+
+    function currentUser() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isSchoolAccount() && currentUser().active == true && currentUser().role == 'admin';
+    }
+
+    function isFaculty() {
+      return isSchoolAccount()
+        && currentUser().active == true
+        && currentUser().role in ['teacher', 'admin'];
+    }
+
+    function validRole(role) {
+      return role in ['student', 'teacher', 'admin'];
+    }
+
+    function validLocation(data, uid) {
+      return data.keys().hasAll([
+          'ownerId', 'displayName', 'role', 'latitude', 'longitude', 'accuracy',
+          'placeLabel', 'note', 'availability', 'sharing', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'ownerId', 'displayName', 'photoURL', 'role', 'latitude', 'longitude',
+          'accuracy', 'placeLabel', 'note', 'availability', 'sharing', 'updatedAt'
+        ])
+        && data.ownerId == uid
+        && data.role in ['teacher', 'admin']
+        && data.latitude is number && data.latitude >= -90 && data.latitude <= 90
+        && data.longitude is number && data.longitude >= -180 && data.longitude <= 180
+        && data.accuracy is number && data.accuracy >= 0
+        && data.placeLabel is string && data.placeLabel.size() <= 80
+        && data.note is string && data.note.size() <= 80
+        && data.availability in ['available', 'busy', 'away']
+        && data.sharing == true
+        && data.updatedAt == request.time;
+    }
+
+    match /config/{document} {
+      allow read, write: if isAdmin();
+    }
+
+    match /users/{uid} {
+      allow get: if isSchoolAccount() && (request.auth.uid == uid || isAdmin());
+      allow list: if isAdmin();
+
+      allow create: if isSchoolAccount()
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasAll([
+          'uid', 'displayName', 'email', 'role', 'active', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.keys().hasOnly([
+          'uid', 'displayName', 'email', 'photoURL', 'role', 'active', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.uid == uid
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() <= 100
+        && request.resource.data.role == 'student'
+        && request.resource.data.active == true
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.updatedAt == request.time;
+
+      allow update: if (isAdmin()
+          && validRole(request.resource.data.role)
+          && request.resource.data.active is bool
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['role', 'active', 'updatedAt']))
+        || (isSchoolAccount()
+          && request.auth.uid == uid
+          && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['displayName', 'photoURL', 'updatedAt']));
+
+      allow delete: if isAdmin() && request.auth.uid != uid;
+    }
+
+    match /locations/{uid} {
+      allow read: if isSchoolAccount() && currentUser().active == true;
+      allow create, update: if isFaculty()
+        && request.auth.uid == uid
+        && validLocation(request.resource.data, uid);
+      allow delete: if isAdmin() || (isFaculty() && request.auth.uid == uid);
+    }
+  }
+}
