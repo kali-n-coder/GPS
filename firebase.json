@@ -6,7 +6,7 @@
   "auth": {
     "providers": {
       "googleSignIn": {
-        "oAuthBrandDisplayName": "Campus Compass",
+        "oAuthBrandDisplayName": "Teachers-position (ティーポジ)",
         "supportEmail": "christianwolff365@gmail.com",
         "authorizedRedirectUris": [
           "https://kali-n-coder.github.io/GPS/"

@@ -150,10 +150,10 @@ function CampusMap({ locations }: { locations: TeacherLocation[] }) {
 function LoginScreen({ onLogin, busy, error }: { onLogin: () => void; busy: boolean; error: string }) {
   return (
     <main className="login-page">
-      <div className="login-brand"><span className="brand-mark"><Icon name="pin" size={25} /></span><span>Campus Compass</span></div>
+      <div className="login-brand"><span className="brand-mark"><Icon name="pin" size={25} /></span><span>Teachers-position <small>ティーポジ</small></span></div>
       <section className="login-card">
         <div className="login-illustration"><span className="radar-ring ring-one"/><span className="radar-ring ring-two"/><span className="login-pin"><Icon name="pin" size={38}/></span></div>
-        <p className="eyebrow">校内ロケーション</p>
+        <p className="eyebrow">TEACHERS LOCATION</p>
         <h1>先生を、すぐ見つける。</h1>
         <p className="login-copy">教職員が共有した現在地と在席状況を、校内アカウントから確認できます。</p>
         {error && <p className="error-message" role="alert">{error}</p>}
@@ -377,7 +377,7 @@ function App() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand"><span className="brand-mark"><Icon name="pin" size={24}/></span><span><b>Campus</b><small>Compass</small></span></div>
+        <div className="brand"><span className="brand-mark"><Icon name="pin" size={24}/></span><span><b>Teachers-position</b><small>ティーポジ</small></span></div>
         <nav className="side-nav" aria-label="メインメニュー">
           <button className={view === "home" ? "active" : ""} onClick={() => setView("home")}><Icon name="home"/><span>ホーム</span></button>
           <button className={view === "chat" ? "active" : ""} onClick={() => setView("chat")}><Icon name="chat"/><span>AIに聞く</span><em>準備中</em></button>
@@ -391,7 +391,7 @@ function App() {
       </aside>
 
       <main className="main-content">
-        <header className="mobile-header"><div className="brand"><span className="brand-mark"><Icon name="pin" size={20}/></span><b>Campus Compass</b></div><div className="avatar small">{avatarInitial(profile.displayName)}</div></header>
+        <header className="mobile-header"><div className="brand"><span className="brand-mark"><Icon name="pin" size={20}/></span><b>Teachers-position <small>ティーポジ</small></b></div><div className="avatar small">{avatarInitial(profile.displayName)}</div></header>
         {demoMode && <div className="demo-banner"><span>DEMO</span> Firebase未接続のローカルプレビューです。データは保存されません。</div>}
         {error && <div className="toast-error" role="alert">{error}<button onClick={() => setError("")}>×</button></div>}
 

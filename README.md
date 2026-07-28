@@ -1,4 +1,4 @@
-# Campus Compass
+# Teachers-position（ティーポジ）
 
 校内アカウントで、共有中の教職員の現在地・在席状況をリアルタイムに確認するWebアプリです。GitHub Pagesでフロントエンドを公開し、Firebase AuthenticationとCloud Firestoreを利用します。
 
