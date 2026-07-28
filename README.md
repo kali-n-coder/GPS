@@ -15,7 +15,8 @@
 - 管理者による場所選択肢・有効状態・マップ位置の編集
 - 管理者による校内マップ画像の登録
 - 場所ごとのQRコード画像ダウンロード（読み取り時に場所を事前選択）
-- 将来Gemini APIを接続するためのチャットUI（現在は未接続）
+- Firebase AI Logic経由のGeminiチャット（`gemini-3.5-flash-lite`）
+- AI送信前の教職員名匿名化と、端末内での名前復元
 - GitHub ActionsによるGitHub Pages自動デプロイ
 
 ## 権限
@@ -78,6 +79,7 @@ GitHubの `Settings → Secrets and variables → Actions → Variables` に、�
 - `VITE_FIREBASE_MESSAGING_SENDER_ID`
 - `VITE_FIREBASE_APP_ID`
 - `VITE_ALLOWED_EMAIL_DOMAIN`
+- `VITE_RECAPTCHA_ENTERPRISE_SITE_KEY`（App Check設定後）
 
 次に `Settings → Pages → Build and deployment → Source` で **GitHub Actions** を選択します。`main` へのpushで `.github/workflows/deploy-pages.yml` が実行され、次のURLへ公開されます。
 
@@ -117,6 +119,10 @@ locations/{uid}
 - 利用開始前に学校の個人情報保護方針、保護者・教職員への説明、保存期間、緊急時対応を確認してください。
 - 場所の履歴は保存しません。将来履歴を追加する場合は、目的・保存期間・閲覧権限を別途設計してください。
 
-## Gemini API接続時の方針
+## Gemini APIの構成
 
-APIキーをGitHub Pagesへ埋め込んではいけません。Firebase FunctionsまたはCloud Runを経由し、認証済みユーザーの権限を検証してから、必要最小限の選択場所だけをGeminiへ渡してください。現時点のチャット欄はUIのみで、外部APIへの送信は行いません。
+Gemini Developer APIをFirebase AI Logic経由で呼び出し、無料枠対応の `gemini-3.5-flash-lite` を使用します。Gemini専用APIキーをGitHub Pagesへ埋め込む必要はありません。
+
+利用者の質問文をそのまま送信せず、ブラウザ内で対象教職員を特定して `STAFF_1` などの匿名IDに置換します。Geminiには匿名ID、選択場所、在席状況、対応予定時刻、情報の鮮度だけを渡し、回答後にブラウザ内で教職員名へ戻します。Firestore全体、メールアドレス、ユーザーID、ひとこと欄は送信しません。
+
+本番環境ではFirebase App CheckへWebアプリを登録し、GitHub Pagesのドメインに限定したreCAPTCHA EnterpriseサイトキーをRepository Variable `VITE_RECAPTCHA_ENTERPRISE_SITE_KEY` に設定しています。クライアントはApp Checkの自動更新トークンとリプレイ保護用の限定使用トークンを利用します。
