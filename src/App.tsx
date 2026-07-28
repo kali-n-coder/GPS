@@ -190,10 +190,8 @@ function placeLabel(location: TeacherLocation, places: CampusPlace[]) {
   return places.find((item) => item.id === location.placeId)?.label ?? "廃止された場所";
 }
 
-type AiLocationRequest = {
-  prompt?: string;
-  aliases?: Map<string, string>;
-  localAnswer?: string;
+type AiRequest = {
+  prompt: string;
   fallbackAnswer?: string;
 };
 
@@ -205,7 +203,7 @@ function nameMatchesQuestion(displayName: string, question: string) {
   return variants.some((value) => compactQuestion.includes(value));
 }
 
-function buildAiLocationRequest(question: string, locations: TeacherLocation[], places: CampusPlace[], now: number): AiLocationRequest {
+function buildAiRequest(question: string, locations: TeacherLocation[], places: CampusPlace[], now: number): AiRequest {
   const matchedTeachers = locations.filter((location) => nameMatchesQuestion(location.displayName, question));
   const matchedPlaceIds = places
     .filter((place) => {
@@ -216,54 +214,12 @@ function buildAiLocationRequest(question: string, locations: TeacherLocation[], 
   const asksAvailability = /(対応できる|対応可能|話せる先生|空いて(?:いる|る)先生|会える先生|相談できる先生|取り込み中)/.test(question);
   const asksEveryone = /(?:全員|みんな|先生たち|教職員).*(?:どこ|居場所|現在地|場所|いる|います)|(?:どこ|居場所|現在地|場所).*(?:全員|みんな|先生たち|教職員)/.test(question);
   const asksSchoolLocation = /(先生|教職員|職員室).*(どこ|居場所|現在地|場所|いる|います)|(?:どこ|居場所|現在地|場所).*(先生|教職員|職員室)/.test(question);
-
-  if (!locations.length && (matchedPlaceIds.length || asksAvailability || asksEveryone || asksSchoolLocation)) {
-    return { localAnswer: "現在、場所を共有している教職員はいません。" };
-  }
-
-  let targetLocations: TeacherLocation[] = [];
-  let intent = "";
-  let requestKind: "teacher" | "place" | "availability" | "all" = "all";
-  if (matchedTeachers.length) {
-    targetLocations = matchedTeachers;
-    intent = "指定された教職員の現在地と対応状況を案内する";
-    requestKind = "teacher";
-  } else if (matchedPlaceIds.length) {
-    targetLocations = locations.filter((location) => matchedPlaceIds.includes(location.placeId));
-    if (!targetLocations.length) return { localAnswer: "その場所を共有している教職員は現在いません。" };
-    intent = "指定された場所にいる教職員を案内する";
-    requestKind = "place";
-  } else if (asksAvailability) {
-    targetLocations = locations;
-    intent = "現在対応できる教職員を優先して案内する";
-    requestKind = "availability";
-  } else if (asksEveryone) {
-    targetLocations = locations;
-    intent = "現在場所を共有している教職員を簡潔に案内する";
-  } else if (asksSchoolLocation) {
-    return { localAnswer: "その教職員または場所の現在情報は共有されていません。" };
-  } else {
-    return {
-      aliases: new Map(),
-      prompt: `あなたは学校内Webアプリ「ティーポジ」のプロトタイプAIアシスタントです。
-利用者の質問に、日本語で自然かつ分かりやすく回答してください。質問に応じて箇条書きや説明文も使えます。
-現在データが提示されていない教職員の居場所は推測せず、「共有されていないため分かりません」と答えてください。
-危険な依頼や不適切な依頼には応じず、安全な代替案を示してください。
-
-利用者の質問:
-${question}`,
-    };
-  }
-
-  const aliases = new Map<string, string>();
-  const context = targetLocations.map((location, index) => {
-    const alias = `STAFF_${index + 1}`;
-    aliases.set(alias, location.displayName);
+  const context = locations.map((location) => {
     const ended = Boolean(location.availabilityUntil && location.availabilityUntil.toMillis() <= now);
     const status = ended ? "対応予定終了" : availabilityLabels[location.availability];
     const until = location.availabilityUntil ? formatTime(location.availabilityUntil) : "未設定";
     const freshness = isStale(location, now) ? "30分以上更新なし・要確認" : "更新情報は新しい";
-    return `${alias} | 場所: ${placeLabel(location, places)} | 状況: ${status} | 対応予定: ${until}まで | 鮮度: ${freshness}`;
+    return `${location.displayName} | 場所: ${placeLabel(location, places)} | 状況: ${status} | 対応予定: ${until}まで | 鮮度: ${freshness}`;
   }).join("\n");
 
   const locationSummary = (location: TeacherLocation) => {
@@ -276,35 +232,44 @@ ${question}`,
     const stale = isStale(location, now) ? "（30分以上更新がないため要確認）" : "";
     return `${location.displayName}は「${placeLabel(location, places)}」にいます。${status}${stale}。`;
   };
-  let fallbackAnswer = targetLocations.map(locationSummary).join(" ");
-  if (requestKind === "availability") {
-    const availableLocations = targetLocations.filter((location) => location.availability === "available"
+  let fallbackAnswer: string | undefined;
+  if (matchedTeachers.length) {
+    fallbackAnswer = matchedTeachers.map(locationSummary).join(" ");
+  } else if (matchedPlaceIds.length) {
+    const placeLocations = locations.filter((location) => matchedPlaceIds.includes(location.placeId));
+    fallbackAnswer = placeLocations.length
+      ? `${placeLocations.map((location) => location.displayName).join("、")}が現在その場所を共有しています。`
+      : "その場所を共有している教職員は現在いません。";
+  } else if (asksAvailability) {
+    const availableLocations = locations.filter((location) => location.availability === "available"
       && (!location.availabilityUntil || location.availabilityUntil.toMillis() > now));
     fallbackAnswer = availableLocations.length
       ? availableLocations.map(locationSummary).join(" ")
       : "現在、対応可能として共有している教職員はいません。";
-  } else if (requestKind === "place") {
-    fallbackAnswer = `${targetLocations.map((location) => location.displayName).join("、")}が現在その場所を共有しています。`;
+  } else if (asksEveryone || asksSchoolLocation) {
+    fallbackAnswer = locations.length
+      ? locations.map(locationSummary).join(" ")
+      : "現在、場所を共有している教職員はいません。";
   }
 
   return {
-    aliases,
     fallbackAnswer,
-    prompt: `あなたは学校内Webアプリ「ティーポジ」の案内AIです。
-以下の匿名化された現在データだけを使い、日本語で1〜3文の簡潔な回答をしてください。
-推測やデータにない情報は追加しないでください。30分以上更新がない情報には「要確認」と添えてください。
-教職員の識別子は必ず STAFF_1 の形式のまま回答し、実名を推測しないでください。
+    prompt: `あなたは学校内Webアプリ「ティーポジ」のプロトタイプAIアシスタントです。
+質問の言い回しや形式を限定せず、日本語で自然かつ分かりやすく回答してください。必要に応じて箇条書きや説明文も使えます。
+教職員の居場所に関する質問には、以下の共有データを使って実名で答えてください。共有データにない居場所は推測しないでください。
+居場所以外の一般的な質問や相談にも通常どおり回答してください。
+危険な依頼や不適切な依頼には応じず、安全な代替案を示してください。
 
-利用者の意図: ${intent}
-現在データ:
-${context}`,
+利用者の質問:
+${question}
+
+現在の共有データ:
+${context || "現在、場所を共有している教職員はいません。"}`,
   };
 }
 
-function restoreTeacherNames(text: string, aliases: Map<string, string>) {
-  let restored = text.replace(/\*\*/g, "").trim();
-  for (const [alias, displayName] of aliases) restored = restored.replaceAll(alias, displayName);
-  return restored.slice(0, 600);
+function normalizeAiAnswer(text: string) {
+  return text.replace(/\*\*/g, "").trim().slice(0, 1000);
 }
 
 function aiDiagnosticCode(message: string) {
@@ -736,15 +701,9 @@ function App() {
     event.preventDefault();
     const trimmed = chatInput.trim();
     if (!trimmed || chatSending) return;
-    const request = buildAiLocationRequest(trimmed, activeLocations, places, now);
+    const request = buildAiRequest(trimmed, activeLocations, places, now);
     setChatMessages((current) => [...current, { from: "user", text: trimmed }]);
     setChatInput("");
-    if (request.localAnswer) {
-      setChatMessages((current) => [...current, { from: "assistant", text: request.localAnswer || "回答できませんでした。" }]);
-      return;
-    }
-
-    if (!request.prompt || !request.aliases) return;
     setChatSending(true);
     try {
       if (demoMode || !aiModel) {
@@ -754,8 +713,8 @@ function App() {
       const model = aiModel;
       const generateAnswer = async (refreshAuth = false) => {
         if (firebaseUser) await firebaseUser.getIdToken(refreshAuth);
-        const result = await model.generateContent(request.prompt!);
-        return restoreTeacherNames(result.response.text(), request.aliases!);
+        const result = await model.generateContent(request.prompt);
+        return normalizeAiAnswer(result.response.text());
       };
       const retryDelays = [0, 1500, 4000];
       let answer = "";
@@ -863,7 +822,7 @@ function App() {
         )}
 
         {view === "chat" && (
-          <div className="page-wrap narrow-page"><section className="page-heading"><div><p className="eyebrow">GEMINI ASSISTANT</p><h1>AIに聞く</h1><p>校内の居場所案内に加えて、一般的な質問や相談にもGeminiが回答します。</p></div></section><section className="chat-card"><div className="chat-notice active"><span>AI</span><div><strong>{demoMode ? "デモ回答モード" : "Gemini API 接続済み"}</strong><p>居場所の質問では教職員名を匿名化します。一般質問の入力文は、そのままGeminiへ送信されます。</p></div></div><div className="messages" aria-live="polite">{chatMessages.map((message, index) => <div key={index} className={`message ${message.from}`}><span>{message.from === "assistant" ? "AI" : avatarInitial(profile.displayName)}</span><p>{message.text}</p></div>)}{chatSending && <div className="message typing"><span>AI</span><p><i/><i/><i/><b>Geminiが確認中</b></p></div>}</div><div className="suggestions"><span>質問例</span><button onClick={() => setChatInput("田中先生はどこにいますか？")}>田中先生はどこ？</button><button onClick={() => setChatInput("今、対応できる先生を教えて")}>対応できる先生は？</button><button onClick={() => setChatInput("今日の勉強計画を一緒に考えて")}>勉強計画を相談</button></div><form className="chat-form" onSubmit={sendChat}><input value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder="AIに質問や相談を入力…" disabled={chatSending} maxLength={300}/><button aria-label="送信" disabled={chatSending || !chatInput.trim()}><Icon name="send"/></button></form></section></div>
+          <div className="page-wrap narrow-page"><section className="page-heading"><div><p className="eyebrow">GEMINI ASSISTANT</p><h1>AIに聞く</h1><p>校内の居場所案内に加えて、一般的な質問や相談にもGeminiが回答します。</p></div></section><section className="chat-card"><div className="chat-notice active"><span>AI</span><div><strong>{demoMode ? "デモ回答モード" : "Gemini API 接続済み"}</strong><p>プロトタイプでは質問文と、共有中の教職員名・場所・対応状況をそのままGeminiへ送信します。</p></div></div><div className="messages" aria-live="polite">{chatMessages.map((message, index) => <div key={index} className={`message ${message.from}`}><span>{message.from === "assistant" ? "AI" : avatarInitial(profile.displayName)}</span><p>{message.text}</p></div>)}{chatSending && <div className="message typing"><span>AI</span><p><i/><i/><i/><b>Geminiが確認中</b></p></div>}</div><div className="suggestions"><span>質問例</span><button onClick={() => setChatInput("田中先生はどこにいますか？")}>田中先生はどこ？</button><button onClick={() => setChatInput("今、対応できる先生を教えて")}>対応できる先生は？</button><button onClick={() => setChatInput("今日の勉強計画を一緒に考えて")}>勉強計画を相談</button></div><form className="chat-form" onSubmit={sendChat}><input value={chatInput} onChange={(event) => setChatInput(event.target.value)} placeholder="形式を気にせずAIに質問…" disabled={chatSending} maxLength={300}/><button aria-label="送信" disabled={chatSending || !chatInput.trim()}><Icon name="send"/></button></form></section></div>
         )}
 
         {view === "admin" && profile.role === "admin" && (
