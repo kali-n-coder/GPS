@@ -10,8 +10,10 @@ import {
   onSnapshot,
   serverTimestamp,
   setDoc,
+  Timestamp,
   updateDoc,
 } from "firebase/firestore";
+import QRCode from "qrcode";
 import { allowedEmailDomain, auth, db, demoMode, firebaseConfigured } from "./firebase";
 import type { AppUser, Availability, CampusPlace, Role, TeacherLocation } from "./types";
 
@@ -49,6 +51,9 @@ const demoLocations: TeacherLocation[] = [
     note: "16:30まで在室予定",
     availability: "available",
     sharing: true,
+    availabilityUntil: Timestamp.fromDate(new Date(Date.now() + 75 * 60_000)),
+    sharingExpiresAt: Timestamp.fromDate(new Date(Date.now() + 2 * 60 * 60_000)),
+    updatedAt: Timestamp.fromDate(new Date(Date.now() - 4 * 60_000)),
   },
   {
     id: "demo-sato",
@@ -59,6 +64,9 @@ const demoLocations: TeacherLocation[] = [
     note: "2年B組の授業中",
     availability: "busy",
     sharing: true,
+    availabilityUntil: Timestamp.fromDate(new Date(Date.now() + 25 * 60_000)),
+    sharingExpiresAt: Timestamp.fromDate(new Date(Date.now() + 90 * 60_000)),
+    updatedAt: Timestamp.fromDate(new Date(Date.now() - 45 * 60_000)),
   },
   {
     id: "demo-yamada",
@@ -69,6 +77,9 @@ const demoLocations: TeacherLocation[] = [
     note: "",
     availability: "away",
     sharing: true,
+    availabilityUntil: Timestamp.fromDate(new Date(Date.now() + 40 * 60_000)),
+    sharingExpiresAt: Timestamp.fromDate(new Date(Date.now() + 3 * 60 * 60_000)),
+    updatedAt: Timestamp.fromDate(new Date(Date.now() - 8 * 60_000)),
   },
 ];
 
@@ -83,6 +94,70 @@ const requestedDemoRole = new URLSearchParams(window.location.search).get("role"
 const defaultDemoUser = demoUsers.find((item) => item.role === requestedDemoRole) ?? demoUsers[0];
 const requestedDemoView = new URLSearchParams(window.location.search).get("view") as View | null;
 const defaultDemoView: View = requestedDemoView && ["home", "chat", "admin"].includes(requestedDemoView) ? requestedDemoView : "home";
+const requestedPlaceId = new URLSearchParams(window.location.search).get("place");
+const staleAfterMs = 30 * 60_000;
+
+function toLocalDateTimeInput(date: Date) {
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function defaultAvailabilityUntil() {
+  return toLocalDateTimeInput(new Date(Date.now() + 60 * 60_000));
+}
+
+function sharingExpiry(minutes: number) {
+  return new Date(Date.now() + minutes * 60_000);
+}
+
+function formatTime(timestamp?: Timestamp) {
+  if (!timestamp) return "";
+  return timestamp.toDate().toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
+}
+
+function isExpired(location: TeacherLocation, now: number) {
+  return Boolean(location.sharingExpiresAt && location.sharingExpiresAt.toMillis() <= now);
+}
+
+function isStale(location: TeacherLocation, now: number) {
+  return Boolean(location.updatedAt && now - location.updatedAt.toMillis() >= staleAfterMs);
+}
+
+async function compressMapImage(file: File) {
+  if (!file.type.startsWith("image/")) throw new Error("画像ファイルを選択してください。");
+  if (file.size > 12 * 1024 * 1024) throw new Error("画像は12MB以下にしてください。");
+
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("画像を読み込めませんでした。"));
+      image.src = objectUrl;
+    });
+    const maxSide = 1400;
+    const scale = Math.min(1, maxSide / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("画像を処理できませんでした。");
+    context.fillStyle = "#f5f4ed";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+    let quality = 0.82;
+    let dataUrl = canvas.toDataURL("image/jpeg", quality);
+    while (dataUrl.length > 700_000 && quality > 0.42) {
+      quality -= 0.1;
+      dataUrl = canvas.toDataURL("image/jpeg", quality);
+    }
+    if (dataUrl.length > 700_000) throw new Error("画像を十分に圧縮できません。より小さい画像を選択してください。");
+    return dataUrl;
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
 
 function Icon({ name, size = 20 }: { name: "pin" | "home" | "chat" | "admin" | "shield" | "logout" | "search" | "send"; size?: number }) {
   const paths = {
@@ -102,9 +177,9 @@ function avatarInitial(name: string) {
   return name.trim().charAt(0) || "?";
 }
 
-function timestampLabel(location: TeacherLocation) {
+function timestampLabel(location: TeacherLocation, now = Date.now()) {
   if (!location.updatedAt) return "たった今";
-  const elapsed = Date.now() - location.updatedAt.toMillis();
+  const elapsed = now - location.updatedAt.toMillis();
   const minutes = Math.max(0, Math.floor(elapsed / 60_000));
   if (minutes < 1) return "たった今";
   if (minutes < 60) return `${minutes}分前`;
@@ -115,13 +190,10 @@ function placeLabel(location: TeacherLocation, places: CampusPlace[]) {
   return places.find((item) => item.id === location.placeId)?.label ?? "廃止された場所";
 }
 
-function CampusMap({ locations, places }: { locations: TeacherLocation[]; places: CampusPlace[] }) {
+function CampusMap({ locations, places, mapImageUrl = "" }: { locations: TeacherLocation[]; places: CampusPlace[]; mapImageUrl?: string }) {
   return (
-    <div className="campus-map" aria-label="教職員の位置概略図">
-      <div className="map-grid" />
-      <span className="building building-a">本館</span>
-      <span className="building building-b">南館</span>
-      <span className="building building-c">体育館</span>
+    <div className={`campus-map${mapImageUrl ? " has-floor-plan" : ""}`} aria-label="教職員の位置概略図">
+      {mapImageUrl ? <img className="floor-plan-image" src={mapImageUrl} alt="管理者が登録した校内マップ" /> : <><div className="map-grid" /><span className="building building-a">本館</span><span className="building building-b">南館</span><span className="building building-c">体育館</span></>}
       {locations.map((location, index) => {
         const place = places.find((item) => item.id === location.placeId) ?? defaultCampusPlaces[0];
         const samePlaceIndex = locations.slice(0, index).filter((item) => item.placeId === location.placeId).length;
@@ -188,22 +260,49 @@ function App() {
   const [locations, setLocations] = useState<TeacherLocation[]>(demoMode ? demoLocations : []);
   const [users, setUsers] = useState<AppUser[]>(demoMode ? demoUsers : []);
   const [places, setPlaces] = useState<CampusPlace[]>(defaultCampusPlaces);
+  const [placesLoaded, setPlacesLoaded] = useState(demoMode);
   const [placesDirty, setPlacesDirty] = useState(false);
   const [placesSaving, setPlacesSaving] = useState(false);
+  const [mapImageUrl, setMapImageUrl] = useState("");
+  const [mapFileName, setMapFileName] = useState("");
+  const [mapDirty, setMapDirty] = useState(false);
+  const [mapSaving, setMapSaving] = useState(false);
+  const [mapProcessing, setMapProcessing] = useState(false);
   const [loading, setLoading] = useState(firebaseConfigured);
   const [authBusy, setAuthBusy] = useState(false);
   const [error, setError] = useState("");
   const [view, setView] = useState<View>(demoMode ? defaultDemoView : "home");
   const [query, setQuery] = useState("");
   const [availability, setAvailability] = useState<Availability>("available");
-  const [placeId, setPlaceId] = useState("staff-room");
+  const [placeId, setPlaceId] = useState(requestedPlaceId || "staff-room");
+  const [availabilityUntil, setAvailabilityUntil] = useState(defaultAvailabilityUntil);
+  const [shareDurationMinutes, setShareDurationMinutes] = useState(120);
   const [note, setNote] = useState("");
   const [sharing, setSharing] = useState(false);
   const [savingPlace, setSavingPlace] = useState(false);
+  const [now, setNow] = useState(Date.now());
   const [chatInput, setChatInput] = useState("");
   const [chatMessages, setChatMessages] = useState<Array<{ from: "user" | "assistant"; text: string }>>([
     { from: "assistant", text: "こんにちは。将来ここから「田中先生はどこ？」のように質問できる予定です。現在AI機能は準備中です。" },
   ]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!profile) return;
+    setSharing(locations.some((item) => item.ownerId === profile.uid && item.sharing && !isExpired(item, now)));
+  }, [locations, now, profile]);
+
+  useEffect(() => {
+    if (!db || !profile || demoMode) return;
+    const firestore = db;
+    locations.filter((item) => isExpired(item, now)).forEach((item) => {
+      void deleteDoc(doc(firestore, "locations", item.id)).catch(() => undefined);
+    });
+  }, [locations, now, profile]);
 
   useEffect(() => {
     if (!auth || !db) return;
@@ -272,17 +371,31 @@ function App() {
         })) as CampusPlace[];
       if (loaded.length) {
         setPlaces(loaded);
+        setPlacesLoaded(true);
         setPlacesDirty(false);
+        if (requestedPlaceId && loaded.some((place) => place.id === requestedPlaceId && place.active)) {
+          setPlaceId(requestedPlaceId);
+        }
       }
     }, () => setError("場所の選択肢を読み込めませんでした。"));
   }, [profile]);
 
   useEffect(() => {
     const activePlaces = places.filter((place) => place.active);
-    if (activePlaces.length && !activePlaces.some((place) => place.id === placeId)) {
+    if (placesLoaded && activePlaces.length && !activePlaces.some((place) => place.id === placeId)) {
       setPlaceId(activePlaces[0].id);
     }
-  }, [places, placeId]);
+  }, [places, placeId, placesLoaded]);
+
+  useEffect(() => {
+    if (!db || !profile) return;
+    return onSnapshot(doc(db, "config", "map"), (snapshot) => {
+      const data = snapshot.data();
+      setMapImageUrl(typeof data?.imageDataUrl === "string" ? data.imageDataUrl : "");
+      setMapFileName(typeof data?.fileName === "string" ? data.fileName : "");
+      setMapDirty(false);
+    }, () => setError("校内マップ画像を読み込めませんでした。"));
+  }, [profile]);
 
   useEffect(() => {
     if (!db || profile?.role !== "admin") return;
@@ -317,6 +430,12 @@ function App() {
       setError("共有する場所を選択してください。");
       return;
     }
+    const availabilityUntilDate = new Date(availabilityUntil);
+    if (!availabilityUntil || Number.isNaN(availabilityUntilDate.getTime()) || availabilityUntilDate.getTime() <= Date.now()) {
+      setError("対応予定の終了時刻は、現在より後の時刻を選択してください。");
+      return;
+    }
+    const expiresAt = sharingExpiry(shareDurationMinutes);
     setSavingPlace(true);
     setError("");
     const location: Omit<TeacherLocation, "id" | "updatedAt"> = {
@@ -328,9 +447,11 @@ function App() {
       note,
       availability,
       sharing: true,
+      availabilityUntil: Timestamp.fromDate(availabilityUntilDate),
+      sharingExpiresAt: Timestamp.fromDate(expiresAt),
     };
     if (demoMode) {
-      setLocations((current) => [{ id: profile.uid, ...location }, ...current.filter((item) => item.ownerId !== profile.uid)]);
+      setLocations((current) => [{ id: profile.uid, ...location, updatedAt: Timestamp.now() }, ...current.filter((item) => item.ownerId !== profile.uid)]);
       setSharing(true);
       setSavingPlace(false);
       return;
@@ -410,6 +531,68 @@ function App() {
     }
   };
 
+  const handleMapFile = async (file?: File) => {
+    if (!file) return;
+    setMapProcessing(true);
+    setError("");
+    try {
+      const compressed = await compressMapImage(file);
+      setMapImageUrl(compressed);
+      setMapFileName(file.name);
+      setMapDirty(true);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "画像を処理できませんでした。");
+    } finally {
+      setMapProcessing(false);
+    }
+  };
+
+  const saveMapImage = async () => {
+    setMapSaving(true);
+    setError("");
+    try {
+      if (demoMode) {
+        setMapDirty(false);
+      } else if (db) {
+        await setDoc(doc(db, "config", "map"), {
+          imageDataUrl: mapImageUrl,
+          fileName: mapFileName,
+          updatedAt: serverTimestamp(),
+        });
+      }
+    } catch {
+      setError("校内マップ画像を保存できませんでした。");
+    } finally {
+      setMapSaving(false);
+    }
+  };
+
+  const removeMapImage = () => {
+    setMapImageUrl("");
+    setMapFileName("");
+    setMapDirty(true);
+  };
+
+  const downloadPlaceQr = async (place: CampusPlace) => {
+    setError("");
+    try {
+      const url = new URL(import.meta.env.BASE_URL, window.location.origin);
+      url.searchParams.set("place", place.id);
+      const dataUrl = await QRCode.toDataURL(url.toString(), {
+        width: 1000,
+        margin: 3,
+        errorCorrectionLevel: "H",
+        color: { dark: "#173f2b", light: "#ffffff" },
+      });
+      const link = document.createElement("a");
+      link.href = dataUrl;
+      link.download = `teapo-${place.id}-qr.png`;
+      link.click();
+    } catch {
+      setError("QRコードを作成できませんでした。");
+    }
+  };
+
   const switchDemoRole = (role: Role) => {
     const next = demoUsers.find((item) => item.role === role) ?? demoUsers[0];
     setProfile(next);
@@ -425,10 +608,12 @@ function App() {
     setChatInput("");
   };
 
-  const visibleLocations = locations.filter((location) => {
+  const activeLocations = locations.filter((location) => !isExpired(location, now));
+  const visibleLocations = activeLocations.filter((location) => {
     const keyword = query.toLowerCase();
     return !keyword || location.displayName.toLowerCase().includes(keyword) || placeLabel(location, places).toLowerCase().includes(keyword);
   });
+  const selectedQrPlace = requestedPlaceId ? places.find((place) => place.id === requestedPlaceId && place.active) : undefined;
 
   if (!firebaseConfigured && !demoMode) return <SetupScreen />;
   if (loading) return <div className="loading-page"><span className="loading-pin"><Icon name="pin" size={28}/></span><p>読み込んでいます…</p></div>;
@@ -459,26 +644,34 @@ function App() {
 
         {view === "home" && (
           <div className="page-wrap">
-            <section className="page-heading"><div><p className="eyebrow">TODAY'S CAMPUS</p><h1>こんにちは、{profile.displayName.split(" ")[0]}さん</h1><p>先生が選択している校内の場所を確認できます。</p></div><div className="live-pill"><span/> {locations.length}人が共有中</div></section>
+            <section className="page-heading"><div><p className="eyebrow">TODAY'S CAMPUS</p><h1>こんにちは、{profile.displayName.split(" ")[0]}さん</h1><p>先生が選択している校内の場所を確認できます。</p></div><div className="live-pill"><span/> {activeLocations.length}人が共有中</div></section>
 
             <section className="privacy-strip"><Icon name="shield" size={21}/><div><strong>GPS・端末の位置情報は使用しません</strong><span>教職員が自分で選択して共有した校内の場所だけを表示します。</span></div></section>
 
             {canShare && (
               <section className="share-panel">
                 <div className="share-title"><div className={sharing ? "share-indicator on" : "share-indicator"}><Icon name="pin"/></div><div><h2>自分のいる場所を共有</h2><p>{sharing ? "選択した場所を共有しています。変更もできます。" : "校内の場所を選んで共有します。"}</p></div></div>
+                {selectedQrPlace && <div className="qr-arrival-notice"><strong>QRコードから場所を選択しました</strong><span>「{selectedQrPlace.label}」を選択中です。内容を確認して共有ボタンを押してください。</span></div>}
                 <div className="share-fields">
                   <label>現在いる場所<span>一覧から選択</span><select value={placeId} onChange={(event) => setPlaceId(event.target.value)}>{places.filter((place) => place.active).map((place) => <option key={place.id} value={place.id}>{place.label}</option>)}</select></label>
                   <label>在席状況<span>生徒への案内</span><select value={availability} onChange={(event) => setAvailability(event.target.value as Availability)}>{Object.entries(availabilityLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                  <label>対応予定<span>終了時刻</span><input type="datetime-local" value={availabilityUntil} min={toLocalDateTimeInput(new Date())} onChange={(event) => setAvailabilityUntil(event.target.value)} /></label>
+                  <label>共有の有効期限<span>自動で終了</span><select value={shareDurationMinutes} onChange={(event) => setShareDurationMinutes(Number(event.target.value))}><option value={30}>30分</option><option value={60}>1時間</option><option value={120}>2時間</option><option value={240}>4時間</option><option value={480}>8時間</option></select></label>
                   <label className="note-field">ひとこと<span>任意</span><input value={note} onChange={(event) => setNote(event.target.value)} maxLength={80} placeholder="例：16:30まで在室予定" /></label>
                   <div className="share-actions"><button className="button primary share-button" onClick={shareSelectedPlace} disabled={savingPlace}><Icon name="pin" size={18}/>{savingPlace ? "保存中…" : sharing ? "変更を保存" : "この場所を共有"}</button>{sharing && <button className="button stop" onClick={stopSharing}>共有を停止</button>}</div>
                 </div>
+                <p className="expiry-note">共有は{shareDurationMinutes >= 60 ? `${shareDurationMinutes / 60}時間` : `${shareDurationMinutes}分`}後に自動終了します。終了前に保存し直すと延長されます。</p>
               </section>
             )}
 
             <div className="dashboard-grid">
-              <section className="map-card"><div className="section-title"><div><p className="eyebrow">CAMPUS MAP</p><h2>校内マップ</h2></div><span className="map-count">{visibleLocations.length} locations</span></div><CampusMap locations={visibleLocations} places={places}/></section>
+              <section className="map-card"><div className="section-title"><div><p className="eyebrow">CAMPUS MAP</p><h2>校内マップ</h2></div><span className="map-count">{visibleLocations.length} locations</span></div><CampusMap locations={visibleLocations} places={places} mapImageUrl={mapImageUrl}/></section>
               <section className="people-card"><div className="section-title"><div><p className="eyebrow">FACULTY</p><h2>先生を探す</h2></div></div><label className="search-box"><Icon name="search" size={18}/><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="名前・場所で検索" /></label><div className="teacher-list">
-                {visibleLocations.map((location) => <article className="teacher-row" key={location.id}><div className="avatar teacher-avatar">{avatarInitial(location.displayName)}<span className={`status-dot ${location.availability}`}/></div><div className="teacher-info"><div><strong>{location.displayName}</strong><span className={`availability ${location.availability}`}>{availabilityLabels[location.availability]}</span></div><p><Icon name="pin" size={14}/>{placeLabel(location, places)}</p>{location.note && <small>{location.note}</small>}</div><div className="updated"><span>{timestampLabel(location)}</span><span>選択場所</span></div></article>)}
+                {visibleLocations.map((location) => {
+                  const stale = isStale(location, now);
+                  const availabilityEnded = Boolean(location.availabilityUntil && location.availabilityUntil.toMillis() <= now);
+                  return <article className={`teacher-row${stale ? " stale" : ""}`} key={location.id}><div className="avatar teacher-avatar">{avatarInitial(location.displayName)}<span className={`status-dot ${location.availability}`}/></div><div className="teacher-info"><div><strong>{location.displayName}</strong><span className={`availability ${availabilityEnded ? "ended" : location.availability}`}>{availabilityEnded ? "対応予定終了" : availabilityLabels[location.availability]}</span></div><p><Icon name="pin" size={14}/>{placeLabel(location, places)}</p>{location.availabilityUntil && <small className="availability-until">対応予定：{formatTime(location.availabilityUntil)}まで</small>}{location.note && <small>{location.note}</small>}</div><div className="updated"><span className={stale ? "stale-label" : ""}>{stale ? "要確認" : timestampLabel(location, now)}</span><span>{stale ? `${timestampLabel(location, now)}に更新` : "選択場所"}</span></div></article>;
+                })}
                 {!visibleLocations.length && <div className="empty-state"><Icon name="pin" size={30}/><p>条件に合う先生が見つかりません</p></div>}
               </div></section>
             </div>
@@ -501,7 +694,7 @@ function App() {
 
             <section className="admin-card place-admin-card">
               <div className="admin-section-heading place-heading"><div><p className="eyebrow">PLACE OPTIONS</p><h2>場所の選択肢</h2><p>名称、利用状態、校内マップ上の表示位置を編集できます。</p></div><button className="button add-place-button" onClick={addPlace}>＋ 場所を追加</button></div>
-              <div className="place-editor-labels"><span /><span>場所名</span><span>マップ横位置</span><span>マップ縦位置</span><span>利用</span><span /></div>
+              <div className="place-editor-labels"><span /><span>場所名</span><span>マップ横位置</span><span>マップ縦位置</span><span>利用</span><span>QR</span><span /></div>
               <div className="place-editor-list">
                 {places.map((place, index) => (
                   <div className="place-editor-row" key={place.id}>
@@ -510,11 +703,25 @@ function App() {
                     <label className="position-control"><span>横 <b>{place.left}%</b></span><input type="range" min="8" max="92" value={place.left} onChange={(event) => updatePlace(place.id, { left: Number(event.target.value) })}/></label>
                     <label className="position-control"><span>縦 <b>{place.top}%</b></span><input type="range" min="12" max="88" value={place.top} onChange={(event) => updatePlace(place.id, { top: Number(event.target.value) })}/></label>
                     <label className="place-toggle"><input type="checkbox" checked={place.active} onChange={(event) => updatePlace(place.id, { active: event.target.checked })}/><span>{place.active ? "有効" : "停止"}</span></label>
+                    <button className="qr-button" onClick={() => downloadPlaceQr(place)} aria-label={`${place.label}のQRコードをダウンロード`}>QR</button>
                     <button className="remove-place" onClick={() => removePlace(place.id)} disabled={places.length === 1} aria-label={`${place.label}を削除`}>×</button>
                   </div>
                 ))}
               </div>
               <div className="place-editor-footer"><p><Icon name="shield" size={16}/>無効にした場所は教職員の選択肢から外れます。削除しても過去履歴は作成されません。</p><button className="button primary" onClick={savePlaces} disabled={!placesDirty || placesSaving}>{placesSaving ? "保存中…" : placesDirty ? "変更を保存" : "保存済み"}</button></div>
+            </section>
+
+            <section className="admin-card map-admin-card">
+              <div className="admin-section-heading map-heading"><div><p className="eyebrow">FLOOR MAP</p><h2>校内マップ画像</h2><p>校内図・フロアマップを画像で登録し、場所マーカーを重ねて表示できます。</p></div></div>
+              <div className="map-admin-grid">
+                <div className="map-upload-panel">
+                  <label className="map-file-button"><input type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => handleMapFile(event.target.files?.[0])} disabled={mapProcessing}/><span>{mapProcessing ? "画像を処理中…" : "画像を選択"}</span></label>
+                  <p>{mapFileName ? `選択中：${mapFileName}` : "PNG・JPEG・WebP／12MB以下。保存時に自動圧縮します。"}</p>
+                  <div className="map-admin-actions"><button className="button stop" onClick={removeMapImage} disabled={!mapImageUrl}>画像を外す</button><button className="button primary" onClick={saveMapImage} disabled={!mapDirty || mapSaving || mapProcessing}>{mapSaving ? "保存中…" : mapDirty ? "マップを保存" : "保存済み"}</button></div>
+                  <p className="admin-note"><Icon name="shield" size={16}/>画像は学校アカウントでログインした利用者だけが読み込めます。</p>
+                </div>
+                <div className="map-preview"><CampusMap locations={activeLocations} places={places} mapImageUrl={mapImageUrl}/></div>
+              </div>
             </section>
           </div>
         )}

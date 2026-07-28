@@ -42,11 +42,13 @@ service cloud.firestore {
     function validLocation(data, uid) {
       return data.keys().hasAll([
           'ownerId', 'displayName', 'role', 'placeId', 'note',
-          'availability', 'sharing', 'updatedAt'
+          'availability', 'availabilityUntil', 'sharing',
+          'sharingExpiresAt', 'updatedAt'
         ])
         && data.keys().hasOnly([
           'ownerId', 'displayName', 'photoURL', 'role', 'placeId', 'note',
-          'availability', 'sharing', 'updatedAt'
+          'availability', 'availabilityUntil', 'sharing',
+          'sharingExpiresAt', 'updatedAt'
         ])
         && data.ownerId == uid
         && data.role in ['teacher', 'admin']
@@ -55,12 +57,17 @@ service cloud.firestore {
         && data.placeId in placeConfig().placeIds
         && data.note is string && data.note.size() <= 80
         && data.availability in ['available', 'busy', 'away']
+        && data.availabilityUntil is timestamp
+        && data.availabilityUntil > request.time
         && data.sharing == true
+        && data.sharingExpiresAt is timestamp
+        && data.sharingExpiresAt > request.time
+        && data.sharingExpiresAt <= request.time + duration.value(8, 'h')
         && data.updatedAt == request.time;
     }
 
     match /config/{document} {
-      allow read: if document in ['auth', 'places'] && isSchoolAccount();
+      allow read: if document in ['auth', 'places', 'map'] && isSchoolAccount();
       allow write: if isAdmin();
     }
 
@@ -106,7 +113,12 @@ service cloud.firestore {
       allow create, update: if isFaculty()
         && request.auth.uid == uid
         && validLocation(request.resource.data, uid);
-      allow delete: if isAdmin() || (isFaculty() && request.auth.uid == uid);
+      allow delete: if isAdmin()
+        || (isFaculty() && request.auth.uid == uid)
+        || (isSchoolAccount()
+          && currentUser().active == true
+          && resource.data.sharingExpiresAt is timestamp
+          && resource.data.sharingExpiresAt <= request.time);
     }
   }
 }

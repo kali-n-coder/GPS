@@ -32,5 +32,7 @@ export interface TeacherLocation {
   note: string;
   availability: Availability;
   sharing: boolean;
+  sharingExpiresAt?: Timestamp;
+  availabilityUntil?: Timestamp;
   updatedAt?: Timestamp;
 }

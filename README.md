@@ -7,10 +7,14 @@
 - Googleアカウント認証
 - `student` / `teacher` / `admin` の3権限
 - 教職員本人による、校内の場所選択と共有の開始・停止
-- 選択場所、在席状況、ひとことのリアルタイム表示
+- 選択場所、在席状況、対応予定時刻、ひとことのリアルタイム表示
+- 30分〜8時間の共有期限と、期限切れデータの自動整理
+- 30分以上更新されていない情報への「要確認」表示
 - 名前・場所検索と校内マップ表示
 - 管理者によるユーザー権限変更
 - 管理者による場所選択肢・有効状態・マップ位置の編集
+- 管理者による校内マップ画像の登録
+- 場所ごとのQRコード画像ダウンロード（読み取り時に場所を事前選択）
 - 将来Gemini APIを接続するためのチャットUI（現在は未接続）
 - GitHub ActionsによるGitHub Pages自動デプロイ
 
@@ -88,12 +92,15 @@ config/auth
 config/places
   items[], placeIds[], updatedAt
 
+config/map
+  imageDataUrl, fileName, updatedAt
+
 users/{uid}
   uid, displayName, email, photoURL, role, active, createdAt, updatedAt
 
 locations/{uid}
   ownerId, displayName, photoURL, role, placeId, note,
-  availability, sharing, updatedAt
+  availability, availabilityUntil, sharing, sharingExpiresAt, updatedAt
 ```
 
 ## 場所共有と運用上の注意
@@ -101,6 +108,11 @@ locations/{uid}
 - GPSやブラウザの位置情報APIは使用しません。
 - 教職員が管理者の設定した選択肢から自分のいる場所を選び、共有します。
 - 管理者はアプリの「管理 → 場所の選択肢」から、場所名・利用状態・マップ表示位置を変更できます。
+- 管理者は各場所の「QR」ボタンから画像をダウンロードし、部屋の入口などに掲示できます。読み取った教職員は、選択済みの場所を確認してから共有を確定します。
+- 管理者は「管理 → 校内マップ画像」から画像を登録できます。画像はJPEGへ圧縮してFirestoreに保存し、学校アカウント以外からの読み取りはルールで拒否します。
+- 共有期限は教職員が30分〜8時間から選択します。期限に達すると画面から直ちに非表示になり、次に校内ユーザーがアプリを開いた際に期限切れドキュメントも自動削除されます。
+- FirestoreのネイティブTTLは課金の有効化が必要なため、現在は使用していません。将来Blazeプランへ移行する場合は `locations.sharingExpiresAt` をTTLフィールドとして設定できます。
+- 最終更新から30分を超えた情報には「要確認」と表示します。
 - 共有を停止するとFirestoreの場所ドキュメントを削除します。
 - 利用開始前に学校の個人情報保護方針、保護者・教職員への説明、保存期間、緊急時対応を確認してください。
 - 場所の履歴は保存しません。将来履歴を追加する場合は、目的・保存期間・閲覧権限を別途設計してください。
